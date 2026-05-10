@@ -1,0 +1,31 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Lead {
+  id        String   @id @default(uuid())
+  name      String
+  address   String
+  phone     String
+  rating    Float?
+  website   String?
+  source    String   // e.g. "Google Maps"
+  query     String   // What was searched
+  location  String   // Where it was searched
+  status    String   @default("FOUND") // FOUND, SENT, FAILED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Settings {
+  id              String   @id @default("default")
+  serpApiKey      String?
+  userName        String?
+  userBusiness    String?
+  userProfession  String?  @default("Web Developer")
+  updatedAt       DateTime @updatedAt
+}
