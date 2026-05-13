@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 
 // Types
 type Business = {
@@ -16,6 +17,7 @@ type Settings = {
   userName: string;
   userBusiness: string;
   userProfession: string;
+  serpApiKey: string;
 };
 
 type WaStatus = 'INITIALIZING' | 'QR_READY' | 'AUTHENTICATED' | 'READY' | 'DISCONNECTED' | 'ERROR';
@@ -44,7 +46,31 @@ const PROFESSIONS = [
   "Digital Marketing Agency"
 ];
 
+type CurrentUser = { id: string; email: string; name: string | null; role?: string };
+
 export default function Home() {
+  const router = useRouter();
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.user) {
+          setCurrentUser(d.user);
+          setIsAdmin(d.user.role === "admin");
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleAccountLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.replace("/login");
+    router.refresh();
+  };
+
   // State
   const [location, setLocation] = useState("");
   const [query, setQuery] = useState(CATEGORIES[0]);
@@ -57,7 +83,8 @@ export default function Home() {
   const [settings, setSettings] = useState<Settings>({
     userName: "",
     userBusiness: "",
-    userProfession: "Website Developer"
+    userProfession: "Website Developer",
+    serpApiKey: ""
   });
 
   const [language, setLanguage] = useState<"EN" | "HINGLISH">("EN");
@@ -114,7 +141,8 @@ export default function Home() {
           setSettings({
             userName: data.userName || "",
             userBusiness: data.userBusiness || "",
-            userProfession: data.userProfession || "Website Developer"
+            userProfession: data.userProfession || "Website Developer",
+            serpApiKey: data.serpApiKey || ""
           });
         }
       } catch (error) {
@@ -240,7 +268,8 @@ export default function Home() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             phone: business.phone,
-            message: msg
+            message: msg,
+            leadId: business.id
           })
         });
 
@@ -288,6 +317,19 @@ export default function Home() {
           {waStatus === 'READY' && (
             <button className="btn btn-ghost btn-sm" onClick={handleLogout}>Logout WA</button>
           )}
+          {currentUser && (
+            <span className="header-badge" title={currentUser.email}>
+              {currentUser.name || currentUser.email}
+            </span>
+          )}
+          {isAdmin && (
+            <a href="/admin" className="btn btn-ghost btn-sm" style={{ background: 'var(--accent-glow)', color: 'var(--accent)' }}>
+              🛡️ Admin
+            </a>
+          )}
+          <button className="btn btn-ghost btn-sm" onClick={handleAccountLogout}>
+            Sign out
+          </button>
           <button className="btn btn-ghost btn-icon" onClick={() => setShowSettings(true)}>
             ⚙️
           </button>
@@ -502,8 +544,17 @@ export default function Home() {
                 <div className="api-hint">This will adapt the message templates for your field.</div>
               </div>
               <hr style={{ border: 'none', borderTop: '1px solid var(--glass-border)', margin: '20px 0' }} />
-              <div className="api-hint" style={{ textAlign: 'center', marginTop: '10px' }}>
-                SerpAPI Key is now securely managed via the server .env file.
+              <div className="form-group" style={{ marginBottom: '16px' }}>
+                <label>Your SerpAPI Key</label>
+                <input
+                  type="password"
+                  className="form-input"
+                  value={settings.serpApiKey}
+                  onChange={e => setSettings({ ...settings, serpApiKey: e.target.value })}
+                  placeholder="Paste your SerpAPI key"
+                  autoComplete="off"
+                />
+                <div className="api-hint">Get one at serpapi.com — stored privately for your account only.</div>
               </div>
             </div>
             <div className="modal-footer">

@@ -9,6 +9,8 @@ datasource db {
 
 model Lead {
   id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   name      String
   address   String
   phone     String
@@ -20,13 +22,41 @@ model Lead {
   status    String   @default("FOUND") // FOUND, SENT, FAILED
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([userId])
 }
 
 model Settings {
-  id              String   @id @default("default")
+  userId          String   @id
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   serpApiKey      String?
   userName        String?
   userBusiness    String?
   userProfession  String?  @default("Web Developer")
   updatedAt       DateTime @updatedAt
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  name         String?
+  role         String    @default("user") // "user" | "admin"
+  onboardedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  sessions     Session[]
+  settings     Settings?
+  leads        Lead[]
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }

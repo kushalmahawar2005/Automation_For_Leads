@@ -1,28 +1,29 @@
 import { NextResponse } from "next/server";
-import { getWhatsAppStatus, initWhatsApp } from "@/lib/whatsapp";
+import { getWhatsAppStatus, initWhatsApp, logoutWhatsApp } from "@/lib/whatsapp";
+import { getSessionUser } from "@/lib/auth";
 
 export async function GET() {
-  const status = getWhatsAppStatus();
+  const user = await getSessionUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
-  // If disconnected, trigger initialization in the background
+  const status = getWhatsAppStatus(user.id);
+
   if (status.status === 'DISCONNECTED' || status.status === 'ERROR') {
-    // Fire and forget
-    initWhatsApp().catch(console.error);
+    initWhatsApp(user.id).catch(console.error);
   }
 
   return NextResponse.json(status);
 }
 
-// Optional endpoint to manually logout/disconnect
-export async function POST(req: Request) {
+export async function POST() {
+  const user = await getSessionUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
-    const client = global.waClient;
-    if (client) {
-      await client.logout();
-      global.waStatus = 'DISCONNECTED';
-      global.waClient = undefined;
-      global.waQrCode = null;
-    }
+    await logoutWhatsApp(user.id);
     return NextResponse.json({ success: true });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
