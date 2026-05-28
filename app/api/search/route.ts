@@ -8,7 +8,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
-    const { location, query } = await req.json();
+    const { location, query, page = 1, pageSize = 20 } = await req.json();
 
     if (!location || !query) {
       return NextResponse.json(
@@ -27,10 +27,16 @@ export async function POST(req: Request) {
       );
     }
 
+    const safePage = Math.max(1, Number(page) || 1);
+    const safePageSize = Math.min(50, Math.max(1, Number(pageSize) || 20));
+    const start = (safePage - 1) * safePageSize;
+
     const url = new URL("https://serpapi.com/search.json");
     url.searchParams.append("engine", "google_maps");
     url.searchParams.append("q", `${query} in ${location}`);
     url.searchParams.append("api_key", apiKey);
+    url.searchParams.append("start", String(start));
+    url.searchParams.append("num", String(safePageSize));
 
     const response = await fetch(url.toString());
     const data = await response.json();
@@ -40,6 +46,15 @@ export async function POST(req: Request) {
     }
 
     const rawResults = (data.local_results || []) as any[];
+    const totalResults =
+      data.search_information?.total_results ??
+      data.search_metadata?.total_results ??
+      data.search_metadata?.total_results_count ??
+      null;
+    const hasNext =
+      Boolean(data.pagination?.next) ||
+      (rawResults.length === safePageSize &&
+        (typeof totalResults === "number" ? safePage * safePageSize < totalResults : true));
 
     const created = await Promise.all(
       rawResults.map((r) =>
@@ -68,7 +83,13 @@ export async function POST(req: Request) {
       website: lead.website ?? undefined,
     }));
 
-    return NextResponse.json({ results });
+    return NextResponse.json({
+      results,
+      totalResults,
+      page: safePage,
+      pageSize: safePageSize,
+      hasNext,
+    });
   } catch (error: any) {
     console.error("Search error:", error);
     return NextResponse.json(

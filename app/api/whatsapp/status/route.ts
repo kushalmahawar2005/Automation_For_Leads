@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getWhatsAppStatus, initWhatsApp, logoutWhatsApp } from "@/lib/whatsapp";
 import { getSessionUser } from "@/lib/auth";
 
+export const runtime = "nodejs";
+
 export async function GET() {
   const user = await getSessionUser();
   if (!user) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 // Types
@@ -77,6 +77,30 @@ export default function Home() {
   const [results, setResults] = useState<Business[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isSearching, setIsSearching] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [totalResults, setTotalResults] = useState<number | null>(null);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const pageSize = 20;
+  const seenKeysRef = useRef<Set<string>>(new Set());
+
+  const makeBusinessKey = (business: Business) => {
+    const name = business.name?.toLowerCase().trim() || "";
+    const address = business.address?.toLowerCase().trim() || "";
+    const phone = business.phone?.replace(/\s+/g, "").trim() || "";
+    return `${phone}||${name}||${address}`;
+  };
+
+  const filterNewBusinesses = (items: Business[]) => {
+    const fresh: Business[] = [];
+    for (const item of items) {
+      const key = makeBusinessKey(item);
+      if (seenKeysRef.current.has(key)) continue;
+      seenKeysRef.current.add(key);
+      fresh.push(item);
+    }
+    return fresh;
+  };
   
   // Settings State
   const [showSettings, setShowSettings] = useState(false);
@@ -185,25 +209,63 @@ export default function Home() {
 
     setIsSearching(true);
     setResults([]);
+    setSelectedIds(new Set());
+    setPage(1);
+    setHasMore(false);
+    setTotalResults(null);
+    seenKeysRef.current = new Set();
     
     try {
       const res = await fetch("/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ location, query }),
+        body: JSON.stringify({ location, query, page: 1, pageSize }),
       });
 
       const data = await res.json();
       
       if (!res.ok) throw new Error(data.error || "Search failed");
 
-      setResults(data.results || []);
-      setStats(s => ({ ...s, found: data.results?.length || 0 }));
-      showToast(`Found ${data.results?.length || 0} businesses!`, "success");
+      const freshResults = filterNewBusinesses(data.results || []);
+      setResults(freshResults);
+      setHasMore(Boolean(data.hasNext));
+      setTotalResults(typeof data.totalResults === "number" ? data.totalResults : null);
+      setStats(s => ({ ...s, found: typeof data.totalResults === "number" ? data.totalResults : (data.results?.length || 0) }));
+      showToast(`Found ${freshResults.length} businesses!`, "success");
     } catch (err: any) {
       showToast(err.message, "error");
     } finally {
       setIsSearching(false);
+    }
+  };
+
+  const handleLoadNext = async () => {
+    if (isLoadingMore || !hasMore) return;
+    setIsLoadingMore(true);
+
+    try {
+      const nextPage = page + 1;
+      const res = await fetch("/api/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ location, query, page: nextPage, pageSize }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Search failed");
+
+      const freshResults = filterNewBusinesses(data.results || []);
+      setResults(freshResults);
+      setPage(nextPage);
+      setHasMore(Boolean(data.hasNext));
+      if (typeof data.totalResults === "number") {
+        setTotalResults(data.totalResults);
+        setStats(s => ({ ...s, found: data.totalResults }));
+      }
+    } catch (err: any) {
+      showToast(err.message, "error");
+    } finally {
+      setIsLoadingMore(false);
     }
   };
 
@@ -413,7 +475,11 @@ export default function Home() {
         <div className="content-grid">
           <div className="results-panel">
             <div className="panel-header">
-              <h3>Contacts List <span className="panel-count">{results.length}</span></h3>
+              <h3>
+                Contacts List <span className="panel-count">
+                  {totalResults ? `${results.length}/${totalResults}` : results.length}
+                </span>
+              </h3>
               <button className="btn btn-ghost btn-sm" onClick={toggleSelectAll}>
                 Select All Valid
               </button>
@@ -451,6 +517,20 @@ export default function Home() {
                 </div>
               )}
             </div>
+            {results.length > 0 && (
+              <div style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                  {totalResults ? `Showing ${results.length} of ${totalResults}` : `Showing ${results.length}`}
+                </div>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={handleLoadNext}
+                  disabled={isLoadingMore || !hasMore}
+                >
+                  {isLoadingMore ? 'Loading...' : hasMore ? 'Next 20' : 'No more'}
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="message-panel">

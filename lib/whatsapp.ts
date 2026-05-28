@@ -23,6 +23,20 @@ declare global {
 const clients: Map<string, ClientState> =
   global.waClients ?? (global.waClients = new Map());
 
+const AUTH_PATH =
+  process.env.WWEBJS_AUTH_PATH ||
+  process.env.WWEBJS_AUTH_DIR ||
+  '.wwebjs_auth';
+
+function getExecutablePath(): string | undefined {
+  return (
+    process.env.PUPPETEER_EXECUTABLE_PATH ||
+    process.env.CHROME_PATH ||
+    process.env.CHROMIUM_PATH ||
+    undefined
+  );
+}
+
 function ensureState(userId: string): ClientState {
   let state = clients.get(userId);
   if (!state) {
@@ -52,13 +66,27 @@ export async function initWhatsApp(userId: string): Promise<void> {
   state.qr = null;
 
   try {
+    if (state.client) {
+      try {
+        await state.client.destroy();
+      } catch (e) {
+        console.warn('Failed to destroy previous client', e);
+      }
+      state.client = undefined;
+    }
+
+    const executablePath = getExecutablePath();
+    const headless: boolean | 'new' =
+      process.env.PUPPETEER_HEADLESS === 'false' ? false : 'new';
+
     const client = new Client({
       authStrategy: new LocalAuth({
         clientId: userId,
-        dataPath: '.wwebjs_auth',
+        dataPath: AUTH_PATH,
       }),
       puppeteer: {
-        headless: true,
+        headless,
+        executablePath,
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
@@ -90,9 +118,17 @@ export async function initWhatsApp(userId: string): Promise<void> {
       state.status = 'READY';
     });
 
+    client.on('auth_failure', (message) => {
+      console.error(`WhatsApp auth failure for ${userId}:`, message);
+      state.status = 'ERROR';
+      state.client = undefined;
+      state.qr = null;
+    });
+
     client.on('disconnected', () => {
       state.status = 'DISCONNECTED';
       state.client = undefined;
+      state.qr = null;
     });
 
     state.client = client;
