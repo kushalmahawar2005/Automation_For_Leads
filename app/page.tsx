@@ -421,6 +421,12 @@ export default function Home() {
             {waStatus === 'AUTHENTICATED' && (
               <div style={{ color: 'var(--green)' }}>✓ Authenticated! Loading chats...</div>
             )}
+            {(waStatus === 'ERROR' || waStatus === 'DISCONNECTED') && (
+              <div style={{ padding: '20px', color: 'var(--accent)' }}>
+                <span className="loading-spinner"></span> <br/><br/>
+                {waStatus === 'ERROR' ? 'Retrying connection...' : 'Connecting to WhatsApp...'}
+              </div>
+            )}
           </div>
         )}
 

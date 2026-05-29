@@ -3,6 +3,7 @@ import { getWhatsAppStatus, initWhatsApp, logoutWhatsApp } from "@/lib/whatsapp"
 import { getSessionUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   const user = await getSessionUser();

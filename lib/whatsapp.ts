@@ -1,7 +1,7 @@
 import { Client, LocalAuth } from 'whatsapp-web.js';
 import qrcode from 'qrcode';
-
-export type WaStatus =
+import fs from 'fs';
+import path from 'path';export type WaStatus =
   | 'INITIALIZING'
   | 'QR_READY'
   | 'AUTHENTICATED'
@@ -123,6 +123,14 @@ export async function initWhatsApp(userId: string): Promise<void> {
       state.status = 'ERROR';
       state.client = undefined;
       state.qr = null;
+      try {
+        const sessionDir = path.join(AUTH_PATH, `session-${userId}`);
+        if (fs.existsSync(sessionDir)) {
+          fs.rmSync(sessionDir, { recursive: true, force: true });
+        }
+      } catch (err) {
+        console.error('Failed to clean session dir', err);
+      }
     });
 
     client.on('disconnected', () => {
