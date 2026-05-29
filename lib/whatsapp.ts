@@ -76,8 +76,8 @@ export async function initWhatsApp(userId: string): Promise<void> {
     }
 
     const executablePath = getExecutablePath();
-    const headless: boolean | 'new' =
-      process.env.PUPPETEER_HEADLESS === 'false' ? false : 'new';
+    const headless: boolean =
+      process.env.PUPPETEER_HEADLESS === 'false' ? false : true;
 
     const client = new Client({
       authStrategy: new LocalAuth({
@@ -94,7 +94,6 @@ export async function initWhatsApp(userId: string): Promise<void> {
           '--disable-accelerated-2d-canvas',
           '--no-first-run',
           '--no-zygote',
-          '--single-process',
           '--disable-gpu',
         ],
       },
