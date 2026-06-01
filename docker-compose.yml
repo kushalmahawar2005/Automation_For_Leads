@@ -1,0 +1,27 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      # SQLite DB lives on the persistent volume so it survives restarts/redeploys.
+      DATABASE_URL: "file:/data/prod.db"
+      # System Chromium installed in the image.
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+      PUPPETEER_SKIP_DOWNLOAD: "true"
+      # WhatsApp session is stored on the volume -> scan QR only ONCE.
+      WWEBJS_AUTH_PATH: /data/wwebjs_auth
+      # App config (edit these).
+      ADMIN_EMAIL: "kushalmahawar71@gmail.com"
+      SERP_API_KEY: ""
+    volumes:
+      - wa-data:/data
+    # Chromium needs a bigger /dev/shm or it crashes mid-linking.
+    shm_size: "1gb"
+    # Cap memory so a runaway Chromium can't kill the whole VPS.
+    mem_limit: 2g
+
+volumes:
+  wa-data:

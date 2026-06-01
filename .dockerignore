@@ -1,0 +1,15 @@
+node_modules
+.next
+.git
+.gitignore
+.wwebjs_auth
+.wwebjs_cache
+dev.db
+prisma/dev.db
+*.tsbuildinfo
+next-env.d.ts
+npm-debug.log*
+.env
+.env.*
+.DS_Store
+README.md
