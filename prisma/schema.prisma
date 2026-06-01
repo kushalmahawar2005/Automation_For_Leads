@@ -37,17 +37,30 @@ model Settings {
 }
 
 model User {
-  id           String    @id @default(uuid())
-  email        String    @unique
-  passwordHash String
-  name         String?
-  role         String    @default("user") // "user" | "admin"
-  onboardedAt  DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  sessions     Session[]
-  settings     Settings?
-  leads        Lead[]
+  id            String    @id @default(uuid())
+  email         String    @unique
+  passwordHash  String
+  name          String?
+  role          String    @default("user") // "user" | "admin"
+  emailVerified DateTime? // null = not verified yet
+  onboardedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  sessions      Session[]
+  settings      Settings?
+  leads         Lead[]
+  verification  EmailVerification?
+}
+
+model EmailVerification {
+  id         String   @id @default(uuid())
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash   String   // hashed 6-digit OTP
+  expiresAt  DateTime
+  attempts   Int      @default(0) // failed verify attempts
+  lastSentAt DateTime @default(now())
+  createdAt  DateTime @default(now())
 }
 
 model Session {

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { hashPassword, createSession, isValidEmail } from '@/lib/auth';
+import { hashPassword, sendOtp, isValidEmail } from '@/lib/auth';
 
 export async function POST(req: Request) {
   try {
@@ -27,9 +27,16 @@ export async function POST(req: Request) {
       data: { email: normalizedEmail, passwordHash, name: name?.trim() || null },
     });
 
-    await createSession(user.id);
+    // No session yet — the account stays unverified until the OTP is confirmed.
+    // A send failure shouldn't strand the account; route to verify anyway so the
+    // user can retry with "Resend".
+    try {
+      await sendOtp({ id: user.id, email: user.email });
+    } catch (e) {
+      console.error('register: failed to send verification email', e);
+    }
 
-    return NextResponse.json({ id: user.id, email: user.email, name: user.name });
+    return NextResponse.json({ needsVerification: true, email: user.email });
   } catch (e) {
     console.error('register error', e);
     return NextResponse.json({ error: 'Registration failed' }, { status: 500 });

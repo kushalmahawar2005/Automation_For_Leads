@@ -1,8 +1,13 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-const PUBLIC_PAGES = new Set(['/login', '/register']);
-const PUBLIC_API_PREFIXES = ['/api/auth/login', '/api/auth/register'];
+const PUBLIC_PAGES = new Set(['/login', '/register', '/verify']);
+const PUBLIC_API_PREFIXES = [
+  '/api/auth/login',
+  '/api/auth/register',
+  '/api/auth/verify',
+  '/api/auth/resend',
+];
 const ONBOARDING_PAGE = '/onboarding';
 const ONBOARDING_API_PREFIX = '/api/onboarding';
 

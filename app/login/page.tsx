@@ -22,6 +22,10 @@ export default function LoginPage() {
         body: JSON.stringify({ email, password }),
       });
       const data = await res.json();
+      if (res.status === 403 && data.needsVerification) {
+        router.replace(`/verify?email=${encodeURIComponent(data.email || email)}`);
+        return;
+      }
       if (!res.ok) {
         setError(data.error || "Login failed");
         return;

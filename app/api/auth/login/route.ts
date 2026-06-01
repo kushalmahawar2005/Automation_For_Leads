@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { verifyPassword, createSession } from '@/lib/auth';
+import { verifyPassword, createSession, sendOtp } from '@/lib/auth';
 
 export async function POST(req: Request) {
   try {
@@ -18,6 +18,20 @@ export async function POST(req: Request) {
     const ok = await verifyPassword(password, user.passwordHash);
     if (!ok) {
       return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
+    }
+
+    // Unverified accounts can't get a session — send a fresh OTP and route them
+    // to the verification step instead of logging in.
+    if (!user.emailVerified) {
+      try {
+        await sendOtp({ id: user.id, email: user.email });
+      } catch (e) {
+        console.error('login: failed to send verification email', e);
+      }
+      return NextResponse.json(
+        { needsVerification: true, email: user.email },
+        { status: 403 }
+      );
     }
 
     await createSession(user.id);

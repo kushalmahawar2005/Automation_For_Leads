@@ -31,6 +31,10 @@ export default function RegisterPage() {
         setError(data.error || "Registration failed");
         return;
       }
+      if (data.needsVerification) {
+        router.replace(`/verify?email=${encodeURIComponent(data.email || email)}`);
+        return;
+      }
       router.replace("/");
       router.refresh();
     } catch (e) {

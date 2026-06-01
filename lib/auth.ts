@@ -1,7 +1,8 @@
-import { randomBytes, scrypt as scryptCb, timingSafeEqual } from 'crypto';
+import { randomBytes, randomInt, scrypt as scryptCb, timingSafeEqual } from 'crypto';
 import { promisify } from 'util';
 import { cookies } from 'next/headers';
 import { prisma } from './db';
+import { sendVerificationEmail } from './email';
 
 const scrypt = promisify(scryptCb) as (
   password: string,
@@ -141,4 +142,75 @@ export async function requireAdmin() {
 
 export function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+// ---- Email verification (6-digit OTP) ----
+
+const OTP_TTL_MINUTES = 10;
+const OTP_MAX_ATTEMPTS = 5;
+const OTP_RESEND_COOLDOWN_SECONDS = 60;
+
+// Generates a fresh OTP for the user, stores its hash, and emails it.
+// Returns { cooldown: seconds } if a code was sent too recently (caller should
+// tell the user to wait); otherwise returns { sent: true }.
+export async function sendOtp(
+  user: { id: string; email: string }
+): Promise<{ sent: true } | { cooldown: number }> {
+  const existing = await prisma.emailVerification.findUnique({ where: { userId: user.id } });
+  if (existing) {
+    const elapsed = (Date.now() - existing.lastSentAt.getTime()) / 1000;
+    if (elapsed < OTP_RESEND_COOLDOWN_SECONDS) {
+      return { cooldown: Math.ceil(OTP_RESEND_COOLDOWN_SECONDS - elapsed) };
+    }
+  }
+
+  const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+  const codeHash = await hashPassword(code);
+  const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
+  const now = new Date();
+
+  await prisma.emailVerification.upsert({
+    where: { userId: user.id },
+    create: { userId: user.id, codeHash, expiresAt, lastSentAt: now, attempts: 0 },
+    update: { codeHash, expiresAt, lastSentAt: now, attempts: 0 },
+  });
+
+  await sendVerificationEmail(user.email, code);
+  return { sent: true };
+}
+
+type VerifyResult =
+  | { ok: true }
+  | { ok: false; reason: 'no_code' | 'expired' | 'too_many' | 'invalid' };
+
+// Verifies a submitted OTP for the user. On success the user's email is marked
+// verified and the verification record is removed.
+export async function verifyOtp(userId: string, code: string): Promise<VerifyResult> {
+  const record = await prisma.emailVerification.findUnique({ where: { userId } });
+  if (!record) return { ok: false, reason: 'no_code' };
+
+  if (record.expiresAt < new Date()) {
+    await prisma.emailVerification.delete({ where: { userId } }).catch(() => {});
+    return { ok: false, reason: 'expired' };
+  }
+
+  if (record.attempts >= OTP_MAX_ATTEMPTS) {
+    return { ok: false, reason: 'too_many' };
+  }
+
+  const valid = await verifyPassword(code, record.codeHash);
+  if (!valid) {
+    await prisma.emailVerification.update({
+      where: { userId },
+      data: { attempts: { increment: 1 } },
+    });
+    return { ok: false, reason: 'invalid' };
+  }
+
+  await prisma.$transaction([
+    prisma.user.update({ where: { id: userId }, data: { emailVerified: new Date() } }),
+    prisma.emailVerification.delete({ where: { userId } }),
+  ]);
+
+  return { ok: true };
 }
