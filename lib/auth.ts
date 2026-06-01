@@ -14,6 +14,17 @@ const ONBOARDED_COOKIE = 'onboarded';
 const ADMIN_COOKIE = 'is_admin';
 const SESSION_DAYS = 30;
 
+// Cookies are marked `Secure` in production by default, but `Secure` cookies are
+// rejected by browsers over plain HTTP. When serving over HTTP (e.g. an IP with no
+// SSL yet), set COOKIE_SECURE=false so sessions persist. Set it back to true once
+// HTTPS is in place.
+function cookieSecure(): boolean {
+  if (process.env.COOKIE_SECURE !== undefined) {
+    return process.env.COOKIE_SECURE === 'true';
+  }
+  return process.env.NODE_ENV === 'production';
+}
+
 function adminEmail(): string | null {
   return process.env.ADMIN_EMAIL?.toLowerCase().trim() || null;
 }
@@ -53,21 +64,21 @@ export async function createSession(userId: string): Promise<string> {
   const cookieStore = await cookies();
   cookieStore.set(SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: cookieSecure(),
     sameSite: 'lax',
     path: '/',
     expires: expiresAt,
   });
   cookieStore.set(ONBOARDED_COOKIE, user?.onboardedAt ? '1' : '0', {
     httpOnly: false,
-    secure: process.env.NODE_ENV === 'production',
+    secure: cookieSecure(),
     sameSite: 'lax',
     path: '/',
     expires: expiresAt,
   });
   cookieStore.set(ADMIN_COOKIE, user?.role === 'admin' ? '1' : '0', {
     httpOnly: false,
-    secure: process.env.NODE_ENV === 'production',
+    secure: cookieSecure(),
     sameSite: 'lax',
     path: '/',
     expires: expiresAt,
@@ -85,7 +96,7 @@ export async function markUserOnboarded(userId: string): Promise<void> {
   const sessionExpires = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
   cookieStore.set(ONBOARDED_COOKIE, '1', {
     httpOnly: false,
-    secure: process.env.NODE_ENV === 'production',
+    secure: cookieSecure(),
     sameSite: 'lax',
     path: '/',
     expires: sessionExpires,
