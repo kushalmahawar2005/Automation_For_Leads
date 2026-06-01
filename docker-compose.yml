@@ -20,6 +20,11 @@ services:
       # App config (edit these).
       ADMIN_EMAIL: "kushalmahawar71@gmail.com"
       SERP_API_KEY: ""
+      # Email verification (Resend). Real values come from a .env file next to this
+      # compose file on the VPS (gitignored, so the key never lands in git). If the
+      # key is empty the OTP is logged to container logs instead of being emailed.
+      RESEND_API_KEY: "${RESEND_API_KEY:-}"
+      EMAIL_FROM: "${EMAIL_FROM:-Kushal Automation <onboarding@resend.dev>}"
     volumes:
       - wa-data:/data
     # Chromium needs a bigger /dev/shm or it crashes mid-linking.
