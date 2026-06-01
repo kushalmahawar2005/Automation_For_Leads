@@ -6,10 +6,10 @@ services:
       - "3000:3000"
     environment:
       NODE_ENV: production
-      # We are serving over plain HTTP (IP, no SSL yet), so session cookies must NOT
-      # be Secure or the browser drops them and login loops. Change to "true" after
-      # you put HTTPS (domain + SSL) in front of the app.
-      COOKIE_SECURE: "false"
+      # HTTPS is now in front of the app (domain + SSL via nginx/certbot), so session
+      # cookies are marked Secure. If you ever serve over plain HTTP again, set this
+      # back to "false" or logins will loop (browsers drop Secure cookies over HTTP).
+      COOKIE_SECURE: "true"
       # SQLite DB lives on the persistent volume so it survives restarts/redeploys.
       DATABASE_URL: "file:/data/prod.db"
       # System Chromium installed in the image.
