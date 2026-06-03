@@ -370,7 +370,7 @@ export default function Home() {
       <header className="header">
         <div className="header-logo">
           <div className="icon">🚀</div>
-          Kushal Automation
+          <span className="header-title">Kushal Automation</span>
         </div>
         <div className="header-actions">
           <div className="header-badge" style={{ background: waStatus === 'READY' ? 'var(--green-glow)' : 'var(--accent-glow)', color: waStatus === 'READY' ? 'var(--green)' : 'var(--accent)' }}>
@@ -414,7 +414,7 @@ export default function Home() {
             )}
             {waStatus === 'QR_READY' && waQrCode && (
               <div>
-                <img src={waQrCode} alt="WhatsApp QR Code" style={{ background: '#fff', padding: '16px', borderRadius: '12px', display: 'inline-block' }} />
+                <img src={waQrCode} alt="WhatsApp QR Code" className="qr-image" style={{ background: '#fff', padding: '16px', borderRadius: '12px', display: 'inline-block' }} />
                 <p style={{ marginTop: '12px', fontSize: '13px', color: 'var(--text-muted)' }}>Scan with WhatsApp {"->"} Linked Devices</p>
               </div>
             )}
@@ -524,8 +524,8 @@ export default function Home() {
               )}
             </div>
             {results.length > 0 && (
-              <div style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+              <div className="results-footer">
+                <div className="results-summary">
                   {totalResults ? `Showing ${results.length} of ${totalResults}` : `Showing ${results.length}`}
                 </div>
                 <button
@@ -540,7 +540,7 @@ export default function Home() {
           </div>
 
           <div className="message-panel">
-            <div className="template-selector" style={{ display: 'flex', gap: '12px' }}>
+            <div className="template-selector template-row">
               <div style={{ flex: 1 }}>
                 <label>Template Language</label>
                 <select className="template-select" value={language} onChange={e => setLanguage(e.target.value as "EN" | "HINGLISH")}>

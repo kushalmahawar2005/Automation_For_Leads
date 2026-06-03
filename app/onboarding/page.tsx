@@ -274,6 +274,7 @@ export default function OnboardingPage() {
                 <img
                   src={waQr}
                   alt="WhatsApp QR Code"
+                  className="qr-image"
                   style={{ background: "#fff", padding: 16, borderRadius: 12, display: "inline-block" }}
                 />
               )}

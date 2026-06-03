@@ -50,7 +50,7 @@ export default function AdminPage() {
       <header className="header">
         <div className="header-logo">
           <div className="icon">🛡️</div>
-          Admin Dashboard
+          <span className="header-title">Admin Dashboard</span>
         </div>
         <div className="header-actions">
           <Link href="/" className="btn btn-ghost btn-sm">
