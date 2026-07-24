@@ -47,3 +47,7 @@ next-env.d.ts
 
 # uploaded media (brochures/portfolios)
 /.media/
+
+# local sqlite (migrated to Neon Postgres)
+prisma/dev.db
+prisma/*.db
