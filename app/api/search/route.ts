@@ -56,36 +56,74 @@ export async function POST(req: Request) {
       (rawResults.length === safePageSize &&
         (typeof totalResults === "number" ? safePage * safePageSize < totalResults : true));
 
-    const created = await Promise.all(
-      rawResults.map((r) =>
-        prisma.lead.create({
-          data: {
-            userId: user.id,
-            name: r.title || "Unknown",
-            address: r.address || "",
-            phone: r.phone || "",
-            rating: typeof r.rating === "number" ? r.rating : null,
-            website: r.website || null,
-            source: "Google Maps",
-            query,
-            location,
-          },
-        })
-      )
-    );
+    // Normalise a phone number to a comparable digits-only form (India-aware),
+    // so the same business isn't saved twice across searches.
+    const normPhone = (raw: string): string => {
+      let d = (raw || "").replace(/\D/g, "");
+      if (d.length === 10) d = `91${d}`;
+      if (d.length === 12 && d.startsWith("91")) return d;
+      return d;
+    };
 
-    const results = created.map((lead) => ({
-      id: lead.id,
-      name: lead.name,
-      address: lead.address,
-      phone: lead.phone,
-      rating: lead.rating ?? undefined,
-      website: lead.website ?? undefined,
-    }));
+    // Pre-load this user's existing phone numbers so we can skip duplicates.
+    const existing = await prisma.lead.findMany({
+      where: { userId: user.id, phone: { not: "" } },
+      select: { phone: true },
+    });
+    const seenPhones = new Set(existing.map((l) => normPhone(l.phone)));
+
+    const results: {
+      id: string;
+      name: string;
+      address: string;
+      phone: string;
+      rating?: number;
+      website?: string;
+    }[] = [];
+    let newCount = 0;
+    let duplicateCount = 0;
+
+    for (const r of rawResults) {
+      const phone = r.phone || "";
+      const key = normPhone(phone);
+
+      // Skip businesses we've already stored for this user (by phone).
+      if (phone && seenPhones.has(key)) {
+        duplicateCount++;
+        continue;
+      }
+      if (phone) seenPhones.add(key);
+
+      const lead = await prisma.lead.create({
+        data: {
+          userId: user.id,
+          name: r.title || "Unknown",
+          address: r.address || "",
+          phone,
+          rating: typeof r.rating === "number" ? r.rating : null,
+          website: r.website || null,
+          source: "Google Maps",
+          query,
+          location,
+        },
+      });
+      newCount++;
+
+      results.push({
+        id: lead.id,
+        name: lead.name,
+        address: lead.address,
+        phone: lead.phone,
+        rating: lead.rating ?? undefined,
+        website: lead.website ?? undefined,
+      });
+    }
 
     return NextResponse.json({
       results,
       totalResults,
+      newCount,
+      duplicateCount,
       page: safePage,
       pageSize: safePageSize,
       hasNext,

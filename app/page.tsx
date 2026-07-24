@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 
 // Types
@@ -11,6 +11,8 @@ type Business = {
   phone: string;
   rating?: number;
   website?: string;
+  status?: string;
+  lastError?: string | null;
 };
 
 type Settings = {
@@ -18,9 +20,35 @@ type Settings = {
   userBusiness: string;
   userProfession: string;
   serpApiKey: string;
+  dailyCap: number;
+  minDelaySec: number;
+  maxDelaySec: number;
+  batchSize: number;
+  batchPauseSec: number;
+  warmup: boolean;
+  validateNumbers: boolean;
+};
+
+type Template = { id: string; name: string; language: string; body: string };
+
+type Campaign = {
+  running: boolean;
+  total: number;
+  sent: number;
+  failed: number;
+  invalid: number;
+  skipped: number;
+  processed: number;
+  currentName?: string;
+  nextSendAt?: number;
+  stopReason?: string;
+  dailyCap: number;
+  dailySentToday: number;
 };
 
 type WaStatus = 'INITIALIZING' | 'QR_READY' | 'AUTHENTICATED' | 'READY' | 'DISCONNECTED' | 'ERROR';
+
+type ViewMode = 'SEARCH' | 'FOUND' | 'SENT' | 'FAILED' | 'INVALID';
 
 const CATEGORIES = [
   "Restaurants & Cafes",
@@ -82,48 +110,59 @@ export default function Home() {
   const [totalResults, setTotalResults] = useState<number | null>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const pageSize = 20;
-  const seenKeysRef = useRef<Set<string>>(new Set());
 
-  const makeBusinessKey = (business: Business) => {
-    const name = business.name?.toLowerCase().trim() || "";
-    const address = business.address?.toLowerCase().trim() || "";
-    const phone = business.phone?.replace(/\s+/g, "").trim() || "";
-    return `${phone}||${name}||${address}`;
-  };
+  // View: live search results vs. saved-lead buckets (Found/Sent/Failed/Invalid)
+  const [viewMode, setViewMode] = useState<ViewMode>('SEARCH');
+  const [counts, setCounts] = useState<Record<string, number>>({ FOUND: 0, SENT: 0, FAILED: 0, INVALID: 0, ALL: 0 });
 
-  const filterNewBusinesses = (items: Business[]) => {
-    const fresh: Business[] = [];
-    for (const item of items) {
-      const key = makeBusinessKey(item);
-      if (seenKeysRef.current.has(key)) continue;
-      seenKeysRef.current.add(key);
-      fresh.push(item);
-    }
-    return fresh;
-  };
-  
   // Settings State
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<Settings>({
     userName: "",
     userBusiness: "",
     userProfession: "Website Developer",
-    serpApiKey: ""
+    serpApiKey: "",
+    dailyCap: 40,
+    minDelaySec: 8,
+    maxDelaySec: 30,
+    batchSize: 10,
+    batchPauseSec: 90,
+    warmup: true,
+    validateNumbers: true,
   });
 
   const [language, setLanguage] = useState<"EN" | "HINGLISH">("EN");
   const [messageTemplate, setMessageTemplate] = useState("");
+  const templateDirty = useRef(false);
 
-  // Update Template when settings or language change
+  // Update Template when settings or language change (unless user edited it)
   useEffect(() => {
+    if (templateDirty.current) return;
     if (language === "EN") {
       setMessageTemplate(`Hi {{name}},\n\nI am ${settings.userName || '[Your Name]'}, a professional ${settings.userProfession} running ${settings.userBusiness || '[Your Agency]'}.\n\nI noticed your business in {{location}} and I would love to collaborate with you to help grow your brand online.\n\nLet me know if you are looking for ${settings.userProfession} services!\n\nBest regards,\n${settings.userName || '[Your Name]'}`);
     } else {
-      let profHinglish = settings.userProfession;
-      
+      const profHinglish = settings.userProfession;
       setMessageTemplate(`Hello {{name}},\n\nMera naam ${settings.userName || '[Your Name]'} hai, main ek professional ${profHinglish} hu aur meri agency ka naam ${settings.userBusiness || '[Your Agency]'} hai.\n\nMaine {{location}} mein aapke business ke baare mein dekha aur mujhe aapke sath kaam karke aapki brand ko online grow karne mein khushi hogi.\n\nAgar aapko ${profHinglish} services ki requirement ho toh please mujhe batayein!\n\nThanks & Regards,\n${settings.userName || '[Your Name]'}`);
     }
   }, [language, settings.userName, settings.userBusiness, settings.userProfession]);
+
+  // Saved templates
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const loadTemplates = useCallback(async () => {
+    try {
+      const res = await fetch("/api/templates");
+      if (res.ok) {
+        const data = await res.json();
+        setTemplates(data.templates || []);
+      }
+    } catch { /* ignore */ }
+  }, []);
+  useEffect(() => { loadTemplates(); }, [loadTemplates]);
+
+  // Media attachment (portfolio / brochure)
+  const [media, setMedia] = useState<{ token: string; name: string } | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // WhatsApp State
   const [waStatus, setWaStatus] = useState<WaStatus>('DISCONNECTED');
@@ -137,23 +176,30 @@ export default function Home() {
         const data = await res.json();
         setWaStatus(data.status);
         setWaQrCode(data.qr);
-      } catch (e) {
+      } catch {
         console.error("Failed to fetch WA status");
       }
     };
-
     fetchStatus();
     const interval = setInterval(fetchStatus, 3000);
     return () => clearInterval(interval);
   }, []);
 
   // Stats
-  const [stats, setStats] = useState({
-    found: 0,
-    selected: 0,
-    sent: 0,
-    failed: 0,
-  });
+  const [stats, setStats] = useState({ found: 0, selected: 0, sent: 0, failed: 0 });
+
+  // Load lead status counts
+  const loadCounts = useCallback(async () => {
+    try {
+      const res = await fetch("/api/leads?take=1");
+      if (res.ok) {
+        const data = await res.json();
+        setCounts(data.counts);
+        setStats((s) => ({ ...s, sent: data.counts.SENT || 0, failed: data.counts.FAILED || 0 }));
+      }
+    } catch { /* ignore */ }
+  }, []);
+  useEffect(() => { loadCounts(); }, [loadCounts]);
 
   // Load settings from DB on mount
   useEffect(() => {
@@ -162,12 +208,20 @@ export default function Home() {
         const res = await fetch("/api/settings");
         if (res.ok) {
           const data = await res.json();
-          setSettings({
+          setSettings((prev) => ({
+            ...prev,
             userName: data.userName || "",
             userBusiness: data.userBusiness || "",
             userProfession: data.userProfession || "Website Developer",
-            serpApiKey: data.serpApiKey || ""
-          });
+            serpApiKey: data.serpApiKey || "",
+            dailyCap: data.dailyCap ?? 40,
+            minDelaySec: data.minDelaySec ?? 8,
+            maxDelaySec: data.maxDelaySec ?? 30,
+            batchSize: data.batchSize ?? 10,
+            batchPauseSec: data.batchPauseSec ?? 90,
+            warmup: data.warmup ?? true,
+            validateNumbers: data.validateNumbers ?? true,
+          }));
         }
       } catch (error) {
         console.error("Error loading settings", error);
@@ -186,18 +240,18 @@ export default function Home() {
       });
       setShowSettings(false);
       showToast("Settings saved securely in DB", "success");
-    } catch (e) {
+    } catch {
       showToast("Failed to save settings", "error");
     }
   };
 
-  const [toasts, setToasts] = useState<{id: number, msg: string, type: string}[]>([]);
+  const [toasts, setToasts] = useState<{ id: number; msg: string; type: string }[]>([]);
   const showToast = (msg: string, type: string = "info") => {
-    const id = Date.now();
-    setToasts(prev => [...prev, { id, msg, type }]);
+    const id = Date.now() + Math.random();
+    setToasts((prev) => [...prev, { id, msg, type }]);
     setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
-    }, 3000);
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 3500);
   };
 
   const handleSearch = async (e: React.FormEvent) => {
@@ -206,34 +260,32 @@ export default function Home() {
       showToast("Please enter both location and select a category", "error");
       return;
     }
-
+    setViewMode('SEARCH');
     setIsSearching(true);
     setResults([]);
     setSelectedIds(new Set());
     setPage(1);
     setHasMore(false);
     setTotalResults(null);
-    seenKeysRef.current = new Set();
-    
+
     try {
       const res = await fetch("/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ location, query, page: 1, pageSize }),
       });
-
       const data = await res.json();
-      
       if (!res.ok) throw new Error(data.error || "Search failed");
 
-      const freshResults = filterNewBusinesses(data.results || []);
-      setResults(freshResults);
+      setResults(data.results || []);
       setHasMore(Boolean(data.hasNext));
       setTotalResults(typeof data.totalResults === "number" ? data.totalResults : null);
-      setStats(s => ({ ...s, found: typeof data.totalResults === "number" ? data.totalResults : (data.results?.length || 0) }));
-      showToast(`Found ${freshResults.length} businesses!`, "success");
-    } catch (err: any) {
-      showToast(err.message, "error");
+      setStats((s) => ({ ...s, found: typeof data.totalResults === "number" ? data.totalResults : (data.results?.length || 0) }));
+      const dup = data.duplicateCount ? ` (${data.duplicateCount} duplicate${data.duplicateCount > 1 ? 's' : ''} skipped)` : '';
+      showToast(`Found ${data.newCount ?? data.results?.length ?? 0} new businesses!${dup}`, "success");
+      loadCounts();
+    } catch (err) {
+      showToast((err as Error).message, "error");
     } finally {
       setIsSearching(false);
     }
@@ -242,7 +294,6 @@ export default function Home() {
   const handleLoadNext = async () => {
     if (isLoadingMore || !hasMore) return;
     setIsLoadingMore(true);
-
     try {
       const nextPage = page + 1;
       const res = await fetch("/api/search", {
@@ -250,54 +301,158 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ location, query, page: nextPage, pageSize }),
       });
-
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Search failed");
 
-      const freshResults = filterNewBusinesses(data.results || []);
-      setResults(freshResults);
+      setResults((prev) => [...prev, ...(data.results || [])]);
       setPage(nextPage);
       setHasMore(Boolean(data.hasNext));
       if (typeof data.totalResults === "number") {
         setTotalResults(data.totalResults);
-        setStats(s => ({ ...s, found: data.totalResults }));
+        setStats((s) => ({ ...s, found: data.totalResults }));
       }
-    } catch (err: any) {
-      showToast(err.message, "error");
+      loadCounts();
+    } catch (err) {
+      showToast((err as Error).message, "error");
     } finally {
       setIsLoadingMore(false);
     }
   };
 
+  // Switch to a saved-lead bucket (Found/Sent/Failed/Invalid)
+  const loadBucket = async (mode: ViewMode) => {
+    setViewMode(mode);
+    setSelectedIds(new Set());
+    setHasMore(false);
+    if (mode === 'SEARCH') return;
+    setIsSearching(true);
+    try {
+      const res = await fetch(`/api/leads?status=${mode}&take=500`);
+      const data = await res.json();
+      if (res.ok) {
+        setResults(data.leads || []);
+        setCounts(data.counts);
+        setTotalResults(data.counts[mode] ?? (data.leads?.length || 0));
+      }
+    } catch {
+      showToast("Failed to load leads", "error");
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
   const toggleSelectAll = () => {
-    if (selectedIds.size === results.filter(r => r.phone).length) {
+    const valid = results.filter((r) => r.phone);
+    if (selectedIds.size === valid.length && valid.length > 0) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(results.filter(r => r.phone).map(r => r.id)));
+      setSelectedIds(new Set(valid.map((r) => r.id)));
     }
   };
 
   const toggleSelect = (id: string, hasPhone: boolean) => {
     if (!hasPhone) return;
-    const newSelected = new Set(selectedIds);
-    if (newSelected.has(id)) {
-      newSelected.delete(id);
-    } else {
-      newSelected.add(id);
-    }
-    setSelectedIds(newSelected);
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedIds(next);
   };
 
   useEffect(() => {
-    setStats(s => ({ ...s, selected: selectedIds.size }));
+    setStats((s) => ({ ...s, selected: selectedIds.size }));
   }, [selectedIds]);
 
   const insertVar = (variable: string) => {
-    setMessageTemplate(prev => prev + variable);
+    templateDirty.current = true;
+    setMessageTemplate((prev) => prev + variable);
   };
 
-  const [isSending, setIsSending] = useState(false);
-  const [sendProgress, setSendProgress] = useState(0);
+  // ---- Template save / apply / delete ----
+  const applyTemplate = (id: string) => {
+    if (!id) return;
+    const t = templates.find((x) => x.id === id);
+    if (!t) return;
+    templateDirty.current = true;
+    setMessageTemplate(t.body);
+    if (t.language === "EN" || t.language === "HINGLISH") setLanguage(t.language);
+    showToast(`Loaded template "${t.name}"`, "info");
+  };
+
+  const saveTemplate = async () => {
+    const name = window.prompt("Template name?");
+    if (!name?.trim()) return;
+    try {
+      const res = await fetch("/api/templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), body: messageTemplate, language }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      await loadTemplates();
+      showToast("Template saved", "success");
+    } catch {
+      showToast("Failed to save template", "error");
+    }
+  };
+
+  // ---- Media upload ----
+  const handleMediaSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/media/upload", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Upload failed");
+      setMedia({ token: data.token, name: data.name });
+      showToast(`Attached ${data.name}`, "success");
+    } catch (err) {
+      showToast((err as Error).message, "error");
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  // ---- Bulk send (server-side, anti-ban) ----
+  const [campaign, setCampaign] = useState<Campaign | null>(null);
+  const [isStarting, setIsStarting] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const pollCampaign = useCallback(() => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch("/api/send/bulk");
+        const data = await res.json();
+        setCampaign(data.campaign);
+        if (data.campaign && !data.campaign.running) {
+          if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = null;
+          loadCounts();
+          if (viewMode !== 'SEARCH') loadBucket(viewMode);
+          const c = data.campaign as Campaign;
+          const reason = c.stopReason === 'DAILY_CAP' ? ' — daily limit reached' :
+            c.stopReason === 'TOO_MANY_FAILURES' ? ' — stopped (too many failures, possible block)' :
+            c.stopReason === 'STOPPED' ? ' — stopped by you' : '';
+          showToast(`Done. Sent ${c.sent}, failed ${c.failed}, invalid ${c.invalid}${reason}`, c.sent > 0 ? "success" : "error");
+        }
+      } catch { /* ignore */ }
+    }, 2000);
+  }, [loadCounts, viewMode]);
+
+  // Resume polling if a campaign is already running (e.g. after refresh)
+  useEffect(() => {
+    fetch("/api/send/bulk").then((r) => r.json()).then((data) => {
+      if (data.campaign) {
+        setCampaign(data.campaign);
+        if (data.campaign.running) pollCampaign();
+      }
+    }).catch(() => {});
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [pollCampaign]);
 
   const handleSendMessages = async () => {
     if (selectedIds.size === 0) {
@@ -308,55 +463,38 @@ export default function Home() {
       showToast("Please scan the WhatsApp QR code first!", "error");
       return;
     }
-
-    setIsSending(true);
-    setSendProgress(0);
-    
-    let successCount = 0;
-    let failCount = 0;
-
-    const selectedBusinesses = results.filter(r => selectedIds.has(r.id));
-
-    for (let i = 0; i < selectedBusinesses.length; i++) {
-      const business = selectedBusinesses[i];
-      
-      const msg = messageTemplate
-        .replace(/{{name}}/g, business.name)
-        .replace(/{{location}}/g, location);
-
-      try {
-        const res = await fetch("/api/send", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            phone: business.phone,
-            message: msg,
-            leadId: business.id
-          })
-        });
-
-        if (res.ok) {
-          successCount++;
-        } else {
-          failCount++;
-        }
-      } catch (e) {
-        failCount++;
-      }
-
-      setSendProgress(((i + 1) / selectedBusinesses.length) * 100);
-      
-      await new Promise(r => setTimeout(r, 2500));
+    setIsStarting(true);
+    try {
+      const res = await fetch("/api/send/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          leadIds: Array.from(selectedIds),
+          templateBody: messageTemplate,
+          fallbackLocation: location,
+          mediaToken: media?.token || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to start");
+      setCampaign(data.campaign);
+      pollCampaign();
+      showToast(`Started sending to ${selectedIds.size} contacts (with safe delays)`, "success");
+    } catch (err) {
+      showToast((err as Error).message, "error");
+    } finally {
+      setIsStarting(false);
     }
+  };
 
-    setStats(s => ({ 
-      ...s, 
-      sent: s.sent + successCount,
-      failed: s.failed + failCount
-    }));
+  const stopCampaign = async () => {
+    await fetch("/api/send/bulk", { method: "DELETE" });
+    showToast("Stopping after current message...", "info");
+  };
 
-    setIsSending(false);
-    showToast(`Sent: ${successCount}, Failed: ${failCount}`, successCount > 0 ? "success" : "error");
+  const resendFailed = async () => {
+    await loadBucket('FAILED');
+    showToast("Loaded failed leads — Select All, then Send to retry", "info");
   };
 
   const handleLogout = async () => {
@@ -364,6 +502,24 @@ export default function Home() {
     setWaStatus('DISCONNECTED');
     setWaQrCode(null);
   };
+
+  const isSending = !!campaign?.running;
+  const progress = campaign && campaign.total > 0 ? (campaign.processed / campaign.total) * 100 : 0;
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!isSending) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [isSending]);
+  const nextInSec = campaign?.nextSendAt ? Math.max(0, Math.round((campaign.nextSendAt - now) / 1000)) : 0;
+
+  const tabs: { key: ViewMode; label: string }[] = [
+    { key: 'SEARCH', label: 'Search' },
+    { key: 'FOUND', label: `New (${counts.FOUND || 0})` },
+    { key: 'SENT', label: `Sent (${counts.SENT || 0})` },
+    { key: 'FAILED', label: `Failed (${counts.FAILED || 0})` },
+    { key: 'INVALID', label: `Invalid (${counts.INVALID || 0})` },
+  ];
 
   return (
     <>
@@ -408,7 +564,7 @@ export default function Home() {
             </p>
             {waStatus === 'INITIALIZING' && (
               <div style={{ padding: '20px' }}>
-                <span className="loading-spinner"></span> <br/><br/>
+                <span className="loading-spinner"></span> <br /><br />
                 Starting WhatsApp Client...
               </div>
             )}
@@ -423,7 +579,7 @@ export default function Home() {
             )}
             {(waStatus === 'ERROR' || waStatus === 'DISCONNECTED') && (
               <div style={{ padding: '20px', color: 'var(--accent)' }}>
-                <span className="loading-spinner"></span> <br/><br/>
+                <span className="loading-spinner"></span> <br /><br />
                 {waStatus === 'ERROR' ? 'Retrying connection...' : 'Connecting to WhatsApp...'}
               </div>
             )}
@@ -440,12 +596,14 @@ export default function Home() {
             <div className="stat-value">{stats.selected}</div>
           </div>
           <div className="stat-card">
-            <div className="stat-label">Messages Sent</div>
-            <div className="stat-value" style={{color: 'var(--green)'}}>{stats.sent}</div>
+            <div className="stat-label">Sent Today</div>
+            <div className="stat-value" style={{ color: 'var(--green)' }}>
+              {campaign?.dailySentToday ?? 0}<span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>/{settings.dailyCap}</span>
+            </div>
           </div>
           <div className="stat-card">
             <div className="stat-label">Failed</div>
-            <div className="stat-value" style={{color: 'var(--red)'}}>{stats.failed}</div>
+            <div className="stat-value" style={{ color: 'var(--red)' }}>{stats.failed}</div>
           </div>
         </div>
 
@@ -454,22 +612,22 @@ export default function Home() {
           <form className="search-form" onSubmit={handleSearch}>
             <div className="form-group">
               <label>Target Location (City or Area)</label>
-              <input 
-                type="text" 
-                className="form-input" 
+              <input
+                type="text"
+                className="form-input"
                 placeholder="e.g. Jaipur, Delhi, Andheri West..."
                 value={location}
-                onChange={e => setLocation(e.target.value)}
+                onChange={(e) => setLocation(e.target.value)}
               />
             </div>
             <div className="form-group">
               <label>Business Category</label>
-              <select 
+              <select
                 className="form-input"
                 value={query}
-                onChange={e => setQuery(e.target.value)}
+                onChange={(e) => setQuery(e.target.value)}
               >
-                {CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                {CATEGORIES.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
               </select>
             </div>
             <button type="submit" className="btn btn-primary" disabled={isSearching}>
@@ -480,50 +638,76 @@ export default function Home() {
 
         <div className="content-grid">
           <div className="results-panel">
+            {/* Status filter tabs */}
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', padding: '4px 4px 12px' }}>
+              {tabs.map((t) => (
+                <button
+                  key={t.key}
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => (t.key === 'SEARCH' ? setViewMode('SEARCH') : loadBucket(t.key))}
+                  style={viewMode === t.key ? { background: 'var(--accent-glow)', color: 'var(--accent)' } : undefined}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
             <div className="panel-header">
               <h3>
-                Contacts List <span className="panel-count">
+                {viewMode === 'SEARCH' ? 'Contacts List' : `${viewMode} Leads`} <span className="panel-count">
                   {totalResults ? `${results.length}/${totalResults}` : results.length}
                 </span>
               </h3>
-              <button className="btn btn-ghost btn-sm" onClick={toggleSelectAll}>
-                Select All Valid
-              </button>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                {viewMode === 'FAILED' && counts.FAILED > 0 && (
+                  <button className="btn btn-ghost btn-sm" onClick={toggleSelectAll} title="Select all to resend">
+                    Select Failed
+                  </button>
+                )}
+                <button className="btn btn-ghost btn-sm" onClick={toggleSelectAll}>
+                  Select All Valid
+                </button>
+              </div>
             </div>
             <div className="results-list">
               {isSearching ? (
                 <div className="search-loading">
-                  <span className="loading-spinner"></span> Scraping Google Maps...
+                  <span className="loading-spinner"></span> {viewMode === 'SEARCH' ? 'Scraping Google Maps...' : 'Loading leads...'}
                 </div>
               ) : results.length > 0 ? (
-                results.map(r => {
+                results.map((r) => {
                   const hasPhone = !!r.phone;
+                  const statusColor = r.status === 'SENT' ? 'var(--green)' : r.status === 'FAILED' ? 'var(--red)' : r.status === 'INVALID' ? 'var(--text-muted)' : 'var(--accent)';
                   return (
-                    <div 
-                      key={r.id} 
+                    <div
+                      key={r.id}
                       className={`result-item ${selectedIds.has(r.id) ? 'selected' : ''}`}
                       onClick={() => toggleSelect(r.id, hasPhone)}
                       style={{ opacity: hasPhone ? 1 : 0.5 }}
                     >
                       <div className={`result-check ${selectedIds.has(r.id) ? 'checked' : ''}`}>✓</div>
                       <div className="result-info">
-                        <div className="result-name">{r.name}</div>
-                        <div className="result-address">{r.address}</div>
+                        <div className="result-name">
+                          {r.name}
+                          {r.status && r.status !== 'FOUND' && (
+                            <span style={{ marginLeft: 8, fontSize: 11, color: statusColor }}>● {r.status}</span>
+                          )}
+                        </div>
+                        <div className="result-address">{r.lastError ? `⚠️ ${r.lastError}` : r.address}</div>
                       </div>
                       <div className="result-phone">
                         {r.phone || 'No phone'}
                       </div>
                     </div>
-                  )
+                  );
                 })
               ) : (
                 <div className="no-results">
                   <div className="icon">📍</div>
-                  <p>Select category and location to scrape</p>
+                  <p>{viewMode === 'SEARCH' ? 'Select category and location to scrape' : 'No leads in this bucket yet'}</p>
                 </div>
               )}
             </div>
-            {results.length > 0 && (
+            {viewMode === 'SEARCH' && results.length > 0 && (
               <div className="results-footer">
                 <div className="results-summary">
                   {totalResults ? `Showing ${results.length} of ${totalResults}` : `Showing ${results.length}`}
@@ -540,50 +724,93 @@ export default function Home() {
           </div>
 
           <div className="message-panel">
-            <div className="template-selector template-row">
+            <div className="template-selector template-row" style={{ gap: 10 }}>
               <div style={{ flex: 1 }}>
                 <label>Template Language</label>
-                <select className="template-select" value={language} onChange={e => setLanguage(e.target.value as "EN" | "HINGLISH")}>
+                <select className="template-select" value={language} onChange={(e) => { templateDirty.current = false; setLanguage(e.target.value as "EN" | "HINGLISH"); }}>
                   <option value="EN">English</option>
                   <option value="HINGLISH">Hinglish</option>
                 </select>
               </div>
+              <div style={{ flex: 1 }}>
+                <label>Saved Templates</label>
+                <select className="template-select" defaultValue="" onChange={(e) => { applyTemplate(e.target.value); e.target.value = ""; }}>
+                  <option value="">Load saved…</option>
+                  {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
             </div>
             <div className="message-editor">
-              <label style={{fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '8px', display: 'block'}}>
+              <label style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '8px', display: 'block' }}>
                 Message Editor (Feel free to edit)
               </label>
-              <textarea 
+              <textarea
                 className="message-textarea"
                 value={messageTemplate}
-                onChange={e => setMessageTemplate(e.target.value)}
+                onChange={(e) => { templateDirty.current = true; setMessageTemplate(e.target.value); }}
                 placeholder="Type your WhatsApp message here..."
               ></textarea>
               <div className="message-vars">
-                <button className="var-tag" onClick={() => insertVar('{{name}}')}>+ Business Name</button>
+                <button className="var-tag" onClick={() => insertVar('{{name}}')}>+ Name</button>
                 <button className="var-tag" onClick={() => insertVar('{{location}}')}>+ Location</button>
+                <button className="var-tag" onClick={() => insertVar('{{address}}')}>+ Address</button>
+                <button className="var-tag" onClick={() => insertVar('{{rating}}')}>+ Rating</button>
+                <button className="var-tag" onClick={() => insertVar('{{website}}')}>+ Website</button>
+                <button className="var-tag" onClick={saveTemplate} style={{ background: 'var(--accent-glow)', color: 'var(--accent)' }}>💾 Save Template</button>
+              </div>
+              {/* Media attach */}
+              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <input ref={fileInputRef} type="file" accept="image/*,application/pdf" style={{ display: 'none' }} onChange={handleMediaSelect} />
+                <button className="var-tag" onClick={() => fileInputRef.current?.click()} disabled={isUploading}>
+                  {isUploading ? 'Uploading…' : '📎 Attach Image/PDF'}
+                </button>
+                {media && (
+                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                    {media.name} <button className="btn-icon" style={{ fontSize: 14 }} onClick={() => setMedia(null)}>×</button>
+                  </span>
+                )}
               </div>
             </div>
-            
-            {isSending && (
-              <div style={{padding: '0 20px'}}>
-                <div style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px'}}>
-                  Sending messages... {Math.round(sendProgress)}%
+
+            {campaign && (isSending || campaign.stopReason) && (
+              <div style={{ padding: '0 20px' }}>
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'flex', justifyContent: 'space-between' }}>
+                  <span>
+                    {isSending ? `Sending… ${campaign.processed}/${campaign.total}` : 'Finished'}
+                    {isSending && campaign.currentName ? ` → ${campaign.currentName}` : ''}
+                  </span>
+                  <span>✅ {campaign.sent} · ❌ {campaign.failed} · 🚫 {campaign.invalid}</span>
                 </div>
                 <div className="progress-bar">
-                  <div className="progress-fill" style={{width: `${sendProgress}%`}}></div>
+                  <div className="progress-fill" style={{ width: `${progress}%` }}></div>
                 </div>
+                {isSending && nextInSec > 0 && (
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                    Next message in {nextInSec}s (human-like delay to stay safe)
+                  </div>
+                )}
               </div>
             )}
 
             <div className="message-actions">
-              <button 
-                className="btn btn-success" 
-                onClick={handleSendMessages}
-                disabled={isSending || selectedIds.size === 0 || waStatus !== 'READY'}
-              >
-                {waStatus !== 'READY' ? 'Scan QR First' : isSending ? 'Sending...' : `Send WhatsApp (${selectedIds.size})`}
-              </button>
+              {isSending ? (
+                <button className="btn btn-ghost" onClick={stopCampaign} style={{ color: 'var(--red)' }}>
+                  ⏹ Stop Sending
+                </button>
+              ) : (
+                <button
+                  className="btn btn-success"
+                  onClick={handleSendMessages}
+                  disabled={isStarting || selectedIds.size === 0 || waStatus !== 'READY'}
+                >
+                  {waStatus !== 'READY' ? 'Scan QR First' : isStarting ? 'Starting…' : `Send WhatsApp (${selectedIds.size})`}
+                </button>
+              )}
+              {!isSending && counts.FAILED > 0 && viewMode !== 'FAILED' && (
+                <button className="btn btn-ghost" onClick={resendFailed} style={{ marginLeft: 8 }}>
+                  ♻️ Resend Failed ({counts.FAILED})
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -600,46 +827,59 @@ export default function Home() {
             <div className="modal-body" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
               <div className="form-group" style={{ marginBottom: '16px' }}>
                 <label>Your Name</label>
-                <input 
-                  type="text" 
-                  className="form-input" 
-                  value={settings.userName}
-                  onChange={e => setSettings({...settings, userName: e.target.value})}
-                  placeholder="e.g. Kushal"
-                />
+                <input type="text" className="form-input" value={settings.userName} onChange={(e) => setSettings({ ...settings, userName: e.target.value })} placeholder="e.g. Kushal" />
               </div>
               <div className="form-group" style={{ marginBottom: '16px' }}>
                 <label>Your Business/Agency Name</label>
-                <input 
-                  type="text" 
-                  className="form-input" 
-                  value={settings.userBusiness}
-                  onChange={e => setSettings({...settings, userBusiness: e.target.value})}
-                  placeholder="e.g. Kushal Studios"
-                />
+                <input type="text" className="form-input" value={settings.userBusiness} onChange={(e) => setSettings({ ...settings, userBusiness: e.target.value })} placeholder="e.g. Kushal Studios" />
               </div>
               <div className="form-group" style={{ marginBottom: '16px' }}>
                 <label>Your Profession / Field</label>
-                <select 
-                  className="form-input"
-                  value={settings.userProfession}
-                  onChange={e => setSettings({...settings, userProfession: e.target.value})}
-                >
-                  {PROFESSIONS.map(p => <option key={p} value={p}>{p}</option>)}
+                <select className="form-input" value={settings.userProfession} onChange={(e) => setSettings({ ...settings, userProfession: e.target.value })}>
+                  {PROFESSIONS.map((p) => <option key={p} value={p}>{p}</option>)}
                 </select>
                 <div className="api-hint">This will adapt the message templates for your field.</div>
               </div>
               <hr style={{ border: 'none', borderTop: '1px solid var(--glass-border)', margin: '20px 0' }} />
+
+              {/* Anti-ban controls */}
+              <h4 style={{ margin: '0 0 12px', fontSize: 14 }}>🛡️ Safety / Anti-Ban</h4>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+                <div className="form-group">
+                  <label>Daily send limit</label>
+                  <input type="number" className="form-input" min={1} max={200} value={settings.dailyCap} onChange={(e) => setSettings({ ...settings, dailyCap: Number(e.target.value) })} />
+                </div>
+                <div className="form-group">
+                  <label>Messages per batch</label>
+                  <input type="number" className="form-input" min={1} max={100} value={settings.batchSize} onChange={(e) => setSettings({ ...settings, batchSize: Number(e.target.value) })} />
+                </div>
+                <div className="form-group">
+                  <label>Min delay (sec)</label>
+                  <input type="number" className="form-input" min={3} value={settings.minDelaySec} onChange={(e) => setSettings({ ...settings, minDelaySec: Number(e.target.value) })} />
+                </div>
+                <div className="form-group">
+                  <label>Max delay (sec)</label>
+                  <input type="number" className="form-input" min={3} value={settings.maxDelaySec} onChange={(e) => setSettings({ ...settings, maxDelaySec: Number(e.target.value) })} />
+                </div>
+                <div className="form-group">
+                  <label>Batch cool-down (sec)</label>
+                  <input type="number" className="form-input" min={0} value={settings.batchPauseSec} onChange={(e) => setSettings({ ...settings, batchPauseSec: Number(e.target.value) })} />
+                </div>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, cursor: 'pointer' }}>
+                <input type="checkbox" checked={settings.warmup} onChange={(e) => setSettings({ ...settings, warmup: e.target.checked })} />
+                <span>Warm-up mode (slower for first few messages)</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, cursor: 'pointer' }}>
+                <input type="checkbox" checked={settings.validateNumbers} onChange={(e) => setSettings({ ...settings, validateNumbers: e.target.checked })} />
+                <span>Skip numbers not on WhatsApp (recommended)</span>
+              </label>
+              <div className="api-hint">Lower limits + longer delays = safer number. New numbers: keep ≤ 30/day for the first week.</div>
+
+              <hr style={{ border: 'none', borderTop: '1px solid var(--glass-border)', margin: '20px 0' }} />
               <div className="form-group" style={{ marginBottom: '16px' }}>
                 <label>Your SerpAPI Key</label>
-                <input
-                  type="password"
-                  className="form-input"
-                  value={settings.serpApiKey}
-                  onChange={e => setSettings({ ...settings, serpApiKey: e.target.value })}
-                  placeholder="Paste your SerpAPI key"
-                  autoComplete="off"
-                />
+                <input type="password" className="form-input" value={settings.serpApiKey} onChange={(e) => setSettings({ ...settings, serpApiKey: e.target.value })} placeholder="Paste your SerpAPI key" autoComplete="off" />
                 <div className="api-hint">Get one at serpapi.com — stored privately for your account only.</div>
               </div>
             </div>
@@ -653,7 +893,7 @@ export default function Home() {
 
       {/* Toasts */}
       <div className="toast-container">
-        {toasts.map(t => (
+        {toasts.map((t) => (
           <div key={t.id} className={`toast ${t.type}`}>
             {t.type === 'success' && '✅'}
             {t.type === 'error' && '❌'}

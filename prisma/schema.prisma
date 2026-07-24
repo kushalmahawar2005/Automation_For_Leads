@@ -8,22 +8,26 @@ datasource db {
 }
 
 model Lead {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name      String
-  address   String
-  phone     String
-  rating    Float?
-  website   String?
-  source    String   // e.g. "Google Maps"
-  query     String   // What was searched
-  location  String   // Where it was searched
-  status    String   @default("FOUND") // FOUND, SENT, FAILED
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id              String    @id @default(uuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name            String
+  address         String
+  phone           String
+  rating          Float?
+  website         String?
+  source          String   // e.g. "Google Maps"
+  query           String   // What was searched
+  location        String   // Where it was searched
+  status          String   @default("FOUND") // FOUND, SENT, FAILED, INVALID
+  lastContactedAt DateTime?
+  lastError       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@index([userId])
+  @@index([userId, phone])
+  @@index([userId, status])
 }
 
 model Settings {
@@ -33,7 +37,41 @@ model Settings {
   userName        String?
   userBusiness    String?
   userProfession  String?  @default("Web Developer")
+  // Anti-ban controls
+  dailyCap        Int      @default(40)   // max messages per calendar day
+  minDelaySec     Int      @default(8)    // min gap between messages
+  maxDelaySec     Int      @default(30)   // max gap between messages
+  batchSize       Int      @default(10)   // messages before a long cool-down
+  batchPauseSec   Int      @default(90)   // cool-down length after each batch
+  warmup          Boolean  @default(true) // ramp up sends for new numbers
+  validateNumbers Boolean  @default(true) // skip numbers not on WhatsApp
   updatedAt       DateTime @updatedAt
+}
+
+model MessageTemplate {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  language  String   @default("EN") // EN | HINGLISH
+  body      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model MessageLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  leadId    String?
+  phone     String
+  status    String   // SENT | FAILED | SKIPPED | INVALID
+  error     String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
 
 model User {
@@ -49,6 +87,8 @@ model User {
   sessions      Session[]
   settings      Settings?
   leads         Lead[]
+  templates     MessageTemplate[]
+  messageLogs   MessageLog[]
   verification  EmailVerification?
 }
 
