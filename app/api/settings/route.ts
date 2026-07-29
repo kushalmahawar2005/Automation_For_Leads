@@ -35,6 +35,7 @@ export async function POST(req: Request) {
     if (typeof data.userBusiness === "string") safe.userBusiness = data.userBusiness;
     if (typeof data.userProfession === "string") safe.userProfession = data.userProfession;
     if (typeof data.serpApiKey === "string") safe.serpApiKey = data.serpApiKey;
+    if (typeof data.portfolioLink === "string") safe.portfolioLink = data.portfolioLink.trim();
 
     if (data.dailyCap !== undefined) safe.dailyCap = clampInt(data.dailyCap, 1, 200, 40);
     if (data.minDelaySec !== undefined) safe.minDelaySec = clampInt(data.minDelaySec, 3, 600, 8);

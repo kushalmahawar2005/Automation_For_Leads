@@ -19,6 +19,7 @@ type Settings = {
   userName: string;
   userBusiness: string;
   userProfession: string;
+  portfolioLink: string;
   serpApiKey: string;
   dailyCap: number;
   minDelaySec: number;
@@ -30,6 +31,9 @@ type Settings = {
 };
 
 type Template = { id: string; name: string; language: string; body: string };
+
+// Built-in starter messages
+type Preset = "INTRO" | "PITCH";
 
 type Campaign = {
   running: boolean;
@@ -56,7 +60,8 @@ const CATEGORIES = [
   "Doctors & Clinics",
   "Gyms & Fitness Centers",
   "Salons & Spas",
-  "Boutiques & Clothing Stores",
+  "Boutiques",
+  "Clothing Stores",
   "Photographers & Video Studios",
   "Wedding Planners",
   "Coaching Institutes",
@@ -121,6 +126,7 @@ export default function Home() {
     userName: "",
     userBusiness: "",
     userProfession: "Website Developer",
+    portfolioLink: "",
     serpApiKey: "",
     dailyCap: 40,
     minDelaySec: 8,
@@ -132,19 +138,31 @@ export default function Home() {
   });
 
   const [language, setLanguage] = useState<"EN" | "HINGLISH">("EN");
+  const [preset, setPreset] = useState<Preset>("INTRO");
   const [messageTemplate, setMessageTemplate] = useState("");
   const templateDirty = useRef(false);
 
-  // Update Template when settings or language change (unless user edited it)
+  // Update Template when settings, language or preset change (unless user edited it)
   useEffect(() => {
     if (templateDirty.current) return;
-    if (language === "EN") {
-      setMessageTemplate(`Hi {{name}},\n\nI am ${settings.userName || '[Your Name]'}, a professional ${settings.userProfession} running ${settings.userBusiness || '[Your Agency]'}.\n\nI noticed your business in {{location}} and I would love to collaborate with you to help grow your brand online.\n\nLet me know if you are looking for ${settings.userProfession} services!\n\nBest regards,\n${settings.userName || '[Your Name]'}`);
-    } else {
-      const profHinglish = settings.userProfession;
-      setMessageTemplate(`Hello {{name}},\n\nMera naam ${settings.userName || '[Your Name]'} hai, main ek professional ${profHinglish} hu aur meri agency ka naam ${settings.userBusiness || '[Your Agency]'} hai.\n\nMaine {{location}} mein aapke business ke baare mein dekha aur mujhe aapke sath kaam karke aapki brand ko online grow karne mein khushi hogi.\n\nAgar aapko ${profHinglish} services ki requirement ho toh please mujhe batayein!\n\nThanks & Regards,\n${settings.userName || '[Your Name]'}`);
+    const me = settings.userName || '[Your Name]';
+    const agency = settings.userBusiness || '[Your Agency]';
+    const prof = settings.userProfession;
+    if (preset === "PITCH") {
+      // Competitor-gap pitch: leans on {{competitor}} / {{business_type}} / {{link}}
+      if (language === "EN") {
+        setMessageTemplate(`Hello {{name}},\n\n${me} here, from ${agency}. We build websites and mobile applications for businesses across Rajasthan.\n\nWhile researching {{business_type}} businesses in {{area}}, I found that {{business}} doesn't currently have a website, while {{competitor}} does — which means they appear first when customers search online, despite your stronger reviews.\n\nA recent project of ours: {{link}}\n\nWould you be open to a short call this week to discuss what this could look like for {{business}}?\n\nRegards,\n${me}`);
+      } else {
+        setMessageTemplate(`Hello {{name}},\n\nMain ${me}, ${agency} se. Hum Rajasthan ke businesses ke liye websites aur mobile applications banate hain.\n\n{{area}} ke {{business_type}} businesses dekhte waqt maine notice kiya ki {{business}} ki abhi tak koi website nahi hai, jabki {{competitor}} ki hai — isliye online search mein customers ko pehle wo dikhte hain, aapke reviews behtar hone ke bawajood.\n\nHamara ek recent project: {{link}}\n\nKya is week ek chhoti si call ho sakti hai, taaki {{business}} ke liye ye kaisa dikhega wo discuss kar sakein?\n\nThanks & Regards,\n${me}`);
+      }
+      return;
     }
-  }, [language, settings.userName, settings.userBusiness, settings.userProfession]);
+    if (language === "EN") {
+      setMessageTemplate(`Hi {{name}},\n\nI am ${me}, a professional ${prof} running ${agency}.\n\nI noticed your business in {{location}} and I would love to collaborate with you to help grow your brand online.\n\nLet me know if you are looking for ${prof} services!\n\nBest regards,\n${me}`);
+    } else {
+      setMessageTemplate(`Hello {{name}},\n\nMera naam ${me} hai, main ek professional ${prof} hu aur meri agency ka naam ${agency} hai.\n\nMaine {{location}} mein aapke business ke baare mein dekha aur mujhe aapke sath kaam karke aapki brand ko online grow karne mein khushi hogi.\n\nAgar aapko ${prof} services ki requirement ho toh please mujhe batayein!\n\nThanks & Regards,\n${me}`);
+    }
+  }, [language, preset, settings.userName, settings.userBusiness, settings.userProfession]);
 
   // Saved templates
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -213,6 +231,7 @@ export default function Home() {
             userName: data.userName || "",
             userBusiness: data.userBusiness || "",
             userProfession: data.userProfession || "Website Developer",
+            portfolioLink: data.portfolioLink || "",
             serpApiKey: data.serpApiKey || "",
             dailyCap: data.dailyCap ?? 40,
             minDelaySec: data.minDelaySec ?? 8,
@@ -503,6 +522,9 @@ export default function Home() {
     setWaQrCode(null);
   };
 
+  const usesCompetitor = /{{\s*competitor\s*}}/i.test(messageTemplate);
+  const usesLink = /{{\s*(link|portfolio)\s*}}/i.test(messageTemplate);
+
   const isSending = !!campaign?.running;
   const progress = campaign && campaign.total > 0 ? (campaign.processed / campaign.total) * 100 : 0;
   const [now, setNow] = useState(Date.now());
@@ -726,6 +748,13 @@ export default function Home() {
           <div className="message-panel">
             <div className="template-selector template-row" style={{ gap: 10 }}>
               <div style={{ flex: 1 }}>
+                <label>Message Style</label>
+                <select className="template-select" value={preset} onChange={(e) => { templateDirty.current = false; setPreset(e.target.value as Preset); }}>
+                  <option value="INTRO">Simple Intro</option>
+                  <option value="PITCH">Website Pitch (competitor angle)</option>
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
                 <label>Template Language</label>
                 <select className="template-select" value={language} onChange={(e) => { templateDirty.current = false; setLanguage(e.target.value as "EN" | "HINGLISH"); }}>
                   <option value="EN">English</option>
@@ -756,8 +785,23 @@ export default function Home() {
                 <button className="var-tag" onClick={() => insertVar('{{address}}')}>+ Address</button>
                 <button className="var-tag" onClick={() => insertVar('{{rating}}')}>+ Rating</button>
                 <button className="var-tag" onClick={() => insertVar('{{website}}')}>+ Website</button>
+                <button className="var-tag" onClick={() => insertVar('{{business_type}}')}>+ Category</button>
+                <button className="var-tag" onClick={() => insertVar('{{area}}')}>+ Area</button>
+                <button className="var-tag" onClick={() => insertVar('{{competitor}}')}>+ Competitor</button>
+                <button className="var-tag" onClick={() => insertVar('{{link}}')}>+ My Link</button>
                 <button className="var-tag" onClick={saveTemplate} style={{ background: 'var(--accent-glow)', color: 'var(--accent)' }}>💾 Save Template</button>
               </div>
+              {usesCompetitor && (
+                <div className="api-hint" style={{ marginTop: 8 }}>
+                  {"{{competitor}}"} picks a rival from the same category + area that already has a
+                  website (best-rated first). If none is found it falls back to “a nearby competitor”.
+                </div>
+              )}
+              {usesLink && !settings.portfolioLink && (
+                <div className="api-hint" style={{ marginTop: 6, color: 'var(--red)' }}>
+                  ⚠️ {"{{link}}"} will send blank — add your portfolio link in ⚙️ Settings.
+                </div>
+              )}
               {/* Media attach */}
               <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <input ref={fileInputRef} type="file" accept="image/*,application/pdf" style={{ display: 'none' }} onChange={handleMediaSelect} />
@@ -839,6 +883,11 @@ export default function Home() {
                   {PROFESSIONS.map((p) => <option key={p} value={p}>{p}</option>)}
                 </select>
                 <div className="api-hint">This will adapt the message templates for your field.</div>
+              </div>
+              <div className="form-group" style={{ marginBottom: '16px' }}>
+                <label>Portfolio / Recent Work Link</label>
+                <input type="url" className="form-input" value={settings.portfolioLink} onChange={(e) => setSettings({ ...settings, portfolioLink: e.target.value })} placeholder="https://your-recent-project.com" />
+                <div className="api-hint">Sent wherever your message uses {"{{link}}"}.</div>
               </div>
               <hr style={{ border: 'none', borderTop: '1px solid var(--glass-border)', margin: '20px 0' }} />
 

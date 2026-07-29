@@ -98,25 +98,78 @@ function isPlausibleNumber(digits: string): boolean {
   return digits.length >= 11 && digits.length <= 15;
 }
 
+// Reads correctly in the same sentence slot as a real competitor name, for
+// leads where we couldn't find one.
+const DEFAULT_COMPETITOR = "a nearby competitor";
+
+// {{competitor}} needs a rival the lead would recognise: same category, same
+// area, already has a website. Best-rated one wins; the lead never competes
+// with itself. Returns leadId -> competitor name.
+export async function buildCompetitorMap(
+  userId: string,
+  leads: Pick<Lead, "id" | "query" | "location">[]
+): Promise<Map<string, string>> {
+  const groups = new Map<string, { query: string; location: string; leads: typeof leads }>();
+  for (const l of leads) {
+    const key = `${l.query}|||${l.location}`;
+    const g = groups.get(key) || { query: l.query, location: l.location, leads: [] };
+    g.leads.push(l);
+    groups.set(key, g);
+  }
+
+  const map = new Map<string, string>();
+  for (const g of groups.values()) {
+    const rivals = (
+      await prisma.lead.findMany({
+        where: { userId, query: g.query, location: g.location, website: { not: null } },
+        orderBy: [{ rating: "desc" }],
+        take: 5,
+        select: { id: true, name: true, website: true },
+      })
+    ).filter((r) => r.website && r.website.trim() !== "");
+
+    for (const lead of g.leads) {
+      const rival = rivals.find((r) => r.id !== lead.id && r.name);
+      if (rival) map.set(lead.id, rival.name);
+    }
+  }
+  return map;
+}
+
 // Replace {{var}} tokens with per-lead + sender values.
 export function renderTemplate(
   body: string,
-  lead: Pick<Lead, "name" | "address" | "phone" | "rating" | "website" | "location">,
-  settings?: Pick<Settings, "userName" | "userBusiness" | "userProfession"> | null,
-  fallbackLocation?: string
+  lead: Pick<Lead, "name" | "address" | "phone" | "rating" | "website" | "location" | "query">,
+  settings?: Pick<
+    Settings,
+    "userName" | "userBusiness" | "userProfession" | "portfolioLink"
+  > | null,
+  fallbackLocation?: string,
+  competitor?: string
 ): string {
+  const area = lead.location || fallbackLocation || "";
   const map: Record<string, string> = {
+    // The lead's business
     name: lead.name || "",
-    location: lead.location || fallbackLocation || "",
+    business: lead.name || "",
+    location: area,
+    area,
     address: lead.address || "",
     rating: lead.rating != null ? String(lead.rating) : "",
     website: lead.website || "",
     phone: lead.phone || "",
+    business_type: lead.query || "",
+    category: lead.query || "",
+    // A rival from the same search that already has a website
+    competitor: competitor || DEFAULT_COMPETITOR,
+    // The sender
     sender: settings?.userName || "",
     myname: settings?.userName || "",
-    business: settings?.userBusiness || "",
     agency: settings?.userBusiness || "",
+    mybusiness: settings?.userBusiness || "",
     profession: settings?.userProfession || "",
+    link: settings?.portfolioLink || "",
+    portfolio: settings?.portfolioLink || "",
   };
   return body.replace(/{{\s*(\w+)\s*}}/g, (_m, key: string) => {
     const v = map[key.toLowerCase()];
@@ -212,8 +265,13 @@ export async function startCampaign(
     }
   }
 
+  // Resolve {{competitor}} once up front — it only depends on saved leads.
+  const competitors = /{{\s*competitor\s*}}/i.test(opts.templateBody)
+    ? await buildCompetitorMap(userId, ordered)
+    : new Map<string, string>();
+
   // Fire-and-forget runner.
-  void runCampaign(userId, state, ordered, opts, cfg, media, settings).catch((e) => {
+  void runCampaign(userId, state, ordered, opts, cfg, media, settings, competitors).catch((e) => {
     console.error("Campaign crashed", e);
     state.running = false;
     state.finishedAt = Date.now();
@@ -238,7 +296,8 @@ async function runCampaign(
     validateNumbers: boolean;
   },
   media: MessageMedia | null,
-  settings: Settings | null
+  settings: Settings | null,
+  competitors: Map<string, string>
 ) {
   const client = getClient(userId);
   if (!client) {
@@ -309,7 +368,13 @@ async function runCampaign(
       }
     }
 
-    const message = renderTemplate(opts.templateBody, lead, settings, opts.fallbackLocation);
+    const message = renderTemplate(
+      opts.templateBody,
+      lead,
+      settings,
+      opts.fallbackLocation,
+      competitors.get(lead.id)
+    );
 
     try {
       // Human-like pre-send: mark seen + show "typing…" briefly.

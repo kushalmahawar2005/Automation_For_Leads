@@ -38,6 +38,7 @@ model Settings {
   userName        String?
   userBusiness    String?
   userProfession  String?  @default("Web Developer")
+  portfolioLink   String?  // portfolio / recent-work URL, used by {{link}}
   // Anti-ban controls
   dailyCap        Int      @default(40)   // max messages per calendar day
   minDelaySec     Int      @default(8)    // min gap between messages
