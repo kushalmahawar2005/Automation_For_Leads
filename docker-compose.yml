@@ -10,8 +10,8 @@ services:
       # cookies are marked Secure. If you ever serve over plain HTTP again, set this
       # back to "false" or logins will loop (browsers drop Secure cookies over HTTP).
       COOKIE_SECURE: "true"
-      # SQLite DB lives on the persistent volume so it survives restarts/redeploys.
-      DATABASE_URL: "file:/data/prod.db"
+      DATABASE_URL: "${DATABASE_URL:-postgresql://neondb_owner:npg_iUeO7F8zXPSH@ep-hidden-thunder-avch87kx-pooler.c-11.us-east-1.aws.neon.tech/neondb?channel_binding=require&sslmode=require}"
+      DATABASE_URL_UNPOOLED: "${DATABASE_URL_UNPOOLED:-postgresql://neondb_owner:npg_iUeO7F8zXPSH@ep-hidden-thunder-avch87kx.c-11.us-east-1.aws.neon.tech/neondb?sslmode=require}"
       # System Chromium installed in the image.
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
       PUPPETEER_SKIP_DOWNLOAD: "true"

@@ -90,12 +90,15 @@ function startOfToday(): Date {
 // India-aware normalisation to WhatsApp's digits-only format.
 export function normalizePhone(raw: string): string {
   let d = (raw || "").replace(/\D/g, "");
+  if (d.startsWith("0091")) d = d.slice(4);
+  else if (d.startsWith("091")) d = d.slice(3);
+  else if (d.startsWith("0") && d.length === 11) d = d.slice(1);
   if (d.length === 10) d = `91${d}`;
   return d;
 }
 
 function isPlausibleNumber(digits: string): boolean {
-  return digits.length >= 11 && digits.length <= 15;
+  return digits.length >= 10 && digits.length <= 15;
 }
 
 // Reads correctly in the same sentence slot as a real competitor name, for
@@ -350,21 +353,33 @@ async function runCampaign(
     // is a strong ban signal.
     if (cfg.validateNumbers) {
       try {
-        const numberId = await client.getNumberId(digits);
+        let numberId = await client.getNumberId(digits);
         if (!numberId) {
-          item.status = "INVALID";
-          item.error = "Not on WhatsApp";
-          state.invalid++;
-          state.processed++;
-          await prisma.lead
-            .updateMany({ where: { id: lead.id, userId }, data: { status: "INVALID", lastError: "Not on WhatsApp" } })
-            .catch(() => {});
-          await log(lead.id, digits, "INVALID", "Not on WhatsApp");
-          continue;
+          numberId = await client.getNumberId(`${digits}@c.us`);
+        }
+        let isRegistered = Boolean(numberId);
+        if (!isRegistered && typeof (client as any).isRegisteredUser === "function") {
+          try {
+            isRegistered = await (client as any).isRegisteredUser(`${digits}@c.us`);
+          } catch {}
+        }
+        if (!isRegistered) {
+          const isStandardIndianMobile = /^91[6789]\d{9}$/.test(digits);
+          if (!isStandardIndianMobile) {
+            item.status = "INVALID";
+            item.error = "Not on WhatsApp";
+            state.invalid++;
+            state.processed++;
+            await prisma.lead
+              .updateMany({ where: { id: lead.id, userId }, data: { status: "INVALID", lastError: "Not on WhatsApp" } })
+              .catch(() => {});
+            await log(lead.id, digits, "INVALID", "Not on WhatsApp");
+            continue;
+          }
         }
       } catch (e) {
         // If the check itself fails, fall through and attempt the send.
-        console.warn("getNumberId failed", e);
+        console.warn("Number validation check failed", e);
       }
     }
 

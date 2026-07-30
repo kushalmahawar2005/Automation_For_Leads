@@ -554,8 +554,10 @@ export default function Home() {
           <div className="header-badge" style={{ background: waStatus === 'READY' ? 'var(--green-glow)' : 'var(--accent-glow)', color: waStatus === 'READY' ? 'var(--green)' : 'var(--accent)' }}>
             WA: {waStatus}
           </div>
-          {waStatus === 'READY' && (
-            <button className="btn btn-ghost btn-sm" onClick={handleLogout}>Logout WA</button>
+          {waStatus !== 'DISCONNECTED' && (
+            <button className="btn btn-ghost btn-sm" onClick={handleLogout} style={{ background: waStatus === 'ERROR' ? 'rgba(239, 68, 68, 0.2)' : undefined, color: waStatus === 'ERROR' ? '#ef4444' : undefined }}>
+              {waStatus === 'ERROR' ? 'Reset WA' : 'Logout WA'}
+            </button>
           )}
           {currentUser && (
             <span className="header-badge" title={currentUser.email}>
@@ -602,7 +604,12 @@ export default function Home() {
             {(waStatus === 'ERROR' || waStatus === 'DISCONNECTED') && (
               <div style={{ padding: '20px', color: 'var(--accent)' }}>
                 <span className="loading-spinner"></span> <br /><br />
-                {waStatus === 'ERROR' ? 'Retrying connection...' : 'Connecting to WhatsApp...'}
+                {waStatus === 'ERROR' ? 'Connection error encountered. Retrying...' : 'Connecting to WhatsApp...'}
+                <div style={{ marginTop: '16px' }}>
+                  <button className="btn btn-secondary btn-sm" onClick={handleLogout}>
+                    🔄 Reset WhatsApp Session
+                  </button>
+                </div>
               </div>
             )}
           </div>
