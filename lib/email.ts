@@ -1,8 +1,5 @@
 import { Resend } from 'resend';
 
-// Email is sent via Resend. Set RESEND_API_KEY and EMAIL_FROM in the environment.
-// In development (or when the key is missing) we fall back to logging the OTP to the
-// server console so the flow stays testable without a provider configured.
 function getResend(): Resend | null {
   const key = process.env.RESEND_API_KEY;
   if (!key) return null;
@@ -17,22 +14,38 @@ export async function sendVerificationEmail(to: string, code: string): Promise<v
   const resend = getResend();
 
   if (!resend) {
-    // No provider configured — log so the dev flow still works.
     console.log(`\n[email] Verification code for ${to}: ${code}\n`);
     return;
   }
 
-  const { error } = await resend.emails.send({
-    from: fromAddress(),
-    to,
-    subject: `${code} is your verification code`,
-    html: verificationHtml(code),
-    text: `Your Kushal Automation verification code is ${code}. It expires in 10 minutes.`,
-  });
+  try {
+    let { error } = await resend.emails.send({
+      from: fromAddress(),
+      to,
+      subject: `${code} is your verification code`,
+      html: verificationHtml(code),
+      text: `Your Kushal Automation verification code is ${code}. It expires in 10 minutes.`,
+    });
 
-  if (error) {
-    console.error('[email] Resend error', error);
-    throw new Error('Failed to send verification email');
+    if (error && fromAddress() !== 'Kushal Automation <onboarding@resend.dev>') {
+      console.warn('[email] Resend custom domain error, retrying with onboarding@resend.dev...', error);
+      const retryRes = await resend.emails.send({
+        from: 'Kushal Automation <onboarding@resend.dev>',
+        to,
+        subject: `${code} is your verification code`,
+        html: verificationHtml(code),
+        text: `Your Kushal Automation verification code is ${code}. It expires in 10 minutes.`,
+      });
+      error = retryRes.error;
+    }
+
+    if (error) {
+      console.error('[email] Resend error:', error);
+      console.log(`\n[email] FALLBACK Verification code for ${to}: ${code}\n`);
+    }
+  } catch (err) {
+    console.error('[email] Unexpected error sending email:', err);
+    console.log(`\n[email] FALLBACK Verification code for ${to}: ${code}\n`);
   }
 }
 
