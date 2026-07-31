@@ -392,17 +392,6 @@ async function runCampaign(
     );
 
     try {
-      // Human-like pre-send: mark seen + show "typing…" briefly.
-      try {
-        const chat = await client.getChatById(chatId);
-        await chat.sendSeen().catch(() => {});
-        await chat.sendStateTyping().catch(() => {});
-        await interruptibleSleep(rand(1500, 3500), () => state.stopRequested);
-        await chat.clearState().catch(() => {});
-      } catch {
-        /* best-effort */
-      }
-
       if (media) {
         await client.sendMessage(chatId, media, { caption: message });
       } else {

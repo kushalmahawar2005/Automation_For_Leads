@@ -172,10 +172,15 @@ export async function initWhatsApp(userId: string): Promise<void> {
         }
       });
 
-      client.on('disconnected', () => {
+      client.on('disconnected', (reason) => {
+        console.warn(`WhatsApp disconnected for ${userId}:`, reason);
         state.status = 'DISCONNECTED';
         state.client = undefined;
         state.qr = null;
+        setTimeout(() => {
+          console.log(`Auto-reconnecting WhatsApp for user ${userId}...`);
+          initWhatsApp(userId).catch(console.error);
+        }, 3000);
       });
 
       state.client = client;
