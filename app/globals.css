@@ -154,7 +154,7 @@ body::before {
   border-radius:var(--radius);padding:24px;margin-bottom:24px;
 }
 .search-panel h2{font-size:18px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:10px}
-.search-form{display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end}
+.search-form{display:grid;grid-template-columns:1fr 1fr 150px auto;gap:12px;align-items:end}
 .search-form > *{min-width:0}
 .form-group{display:flex;flex-direction:column;gap:6px}
 .form-group label{font-size:13px;color:var(--text-secondary);font-weight:500}

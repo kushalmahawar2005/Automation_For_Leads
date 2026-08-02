@@ -70,6 +70,9 @@ const CATEGORIES = [
   "Car Dealerships & Garages"
 ];
 
+// How many businesses to pull per scrape (SerpAPI caps a page at 50).
+const SCRAPE_SIZES = [10, 20, 30, 50];
+
 const PROFESSIONS = [
   "Website Developer",
   "Video Editor",
@@ -114,7 +117,8 @@ export default function Home() {
   const [hasMore, setHasMore] = useState(false);
   const [totalResults, setTotalResults] = useState<number | null>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const pageSize = 20;
+  // How many businesses each scrape pulls — user's choice.
+  const [pageSize, setPageSize] = useState(20);
 
   // View: live search results vs. saved-lead buckets (Found/Sent/Failed/Invalid)
   const [viewMode, setViewMode] = useState<ViewMode>('SEARCH');
@@ -435,6 +439,73 @@ export default function Home() {
     }
   };
 
+  // ---- PDF export (company name / phone / location) ----
+  const [showExport, setShowExport] = useState(false);
+  const [exportCount, setExportCount] = useState(50);
+  const [exportSelectedOnly, setExportSelectedOnly] = useState(false);
+  const [exportOnlyWithPhone, setExportOnlyWithPhone] = useState(true);
+  const [isExporting, setIsExporting] = useState(false);
+
+  const bucketTotal = viewMode === 'SEARCH' ? results.length : (counts[viewMode] || results.length);
+  const availableToExport = exportSelectedOnly ? selectedIds.size : bucketTotal;
+
+  const openExport = () => {
+    const hasSelection = selectedIds.size > 0;
+    setExportSelectedOnly(hasSelection);
+    setExportCount(Math.max(1, hasSelection ? selectedIds.size : bucketTotal));
+    setShowExport(true);
+  };
+
+  const handleExportPdf = async () => {
+    const count = Math.max(1, Math.min(2000, Number(exportCount) || 1));
+    const payload: Record<string, unknown> = { limit: count, onlyWithPhone: exportOnlyWithPhone };
+
+    if (exportSelectedOnly) {
+      if (selectedIds.size === 0) {
+        showToast("No leads selected", "error");
+        return;
+      }
+      payload.ids = Array.from(selectedIds).slice(0, count);
+    } else if (viewMode === 'SEARCH') {
+      if (results.length === 0) {
+        showToast("Nothing to export — scrape some leads first", "error");
+        return;
+      }
+      payload.ids = results.slice(0, count).map((r) => r.id);
+    } else {
+      payload.status = viewMode;
+    }
+
+    setIsExporting(true);
+    try {
+      const res = await fetch("/api/leads/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Export failed");
+      }
+      const filename = (res.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/)?.[1];
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename || "leads.pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setShowExport(false);
+      showToast("PDF downloaded", "success");
+    } catch (err) {
+      showToast((err as Error).message, "error");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   // ---- Bulk send (server-side, anti-ban) ----
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [isStarting, setIsStarting] = useState(false);
@@ -659,6 +730,16 @@ export default function Home() {
                 {CATEGORIES.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
               </select>
             </div>
+            <div className="form-group">
+              <label>How many leads</label>
+              <select
+                className="form-input"
+                value={pageSize}
+                onChange={(e) => setPageSize(Number(e.target.value))}
+              >
+                {SCRAPE_SIZES.map((s) => <option key={s} value={s}>{s} results</option>)}
+              </select>
+            </div>
             <button type="submit" className="btn btn-primary" disabled={isSearching}>
               {isSearching ? <span className="loading-spinner"></span> : 'Scrape Data'}
             </button>
@@ -694,6 +775,14 @@ export default function Home() {
                 )}
                 <button className="btn btn-ghost btn-sm" onClick={toggleSelectAll}>
                   Select All Valid
+                </button>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={openExport}
+                  disabled={results.length === 0}
+                  title="Export company name, phone & location as PDF"
+                >
+                  📄 Export PDF
                 </button>
               </div>
             </div>
@@ -746,7 +835,7 @@ export default function Home() {
                   onClick={handleLoadNext}
                   disabled={isLoadingMore || !hasMore}
                 >
-                  {isLoadingMore ? 'Loading...' : hasMore ? 'Next 20' : 'No more'}
+                  {isLoadingMore ? 'Loading...' : hasMore ? `Next ${pageSize}` : 'No more'}
                 </button>
               </div>
             )}
@@ -942,6 +1031,84 @@ export default function Home() {
             <div className="modal-footer">
               <button className="btn btn-ghost" onClick={() => setShowSettings(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={saveSettings}>Save to Database</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Export to PDF Modal */}
+      {showExport && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <div className="modal-header">
+              <h3>📄 Export Leads as PDF</h3>
+              <button className="btn-icon" onClick={() => setShowExport(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="api-hint" style={{ marginBottom: 18 }}>
+                PDF me har lead ka <b>Company Name</b>, <b>Phone Number</b> aur <b>Location</b> aayega.
+              </div>
+
+              <div className="form-group" style={{ marginBottom: '10px' }}>
+                <label>Kitne leads export karne hain?</label>
+                <input
+                  type="number"
+                  className="form-input"
+                  min={1}
+                  max={2000}
+                  value={exportCount}
+                  onChange={(e) => setExportCount(Number(e.target.value))}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+                {[10, 25, 50, 100].map((c) => (
+                  <button
+                    key={c}
+                    className="var-tag"
+                    onClick={() => setExportCount(c)}
+                    style={exportCount === c ? { background: 'var(--accent-glow)', color: 'var(--accent)' } : undefined}
+                  >
+                    {c}
+                  </button>
+                ))}
+                <button
+                  className="var-tag"
+                  onClick={() => setExportCount(Math.max(1, availableToExport))}
+                  style={exportCount === availableToExport ? { background: 'var(--accent-glow)', color: 'var(--accent)' } : undefined}
+                >
+                  All ({availableToExport})
+                </button>
+              </div>
+              <div className="api-hint" style={{ marginBottom: 16 }}>
+                {exportSelectedOnly
+                  ? `${selectedIds.size} selected lead${selectedIds.size === 1 ? '' : 's'} available`
+                  : `${availableToExport} lead${availableToExport === 1 ? '' : 's'} available in ${viewMode === 'SEARCH' ? 'the current search' : `the ${viewMode} bucket`}`}
+                {' '}· max 2000 per PDF.
+              </div>
+
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, cursor: 'pointer', opacity: selectedIds.size === 0 ? 0.5 : 1 }}>
+                <input
+                  type="checkbox"
+                  checked={exportSelectedOnly}
+                  disabled={selectedIds.size === 0}
+                  onChange={(e) => setExportSelectedOnly(e.target.checked)}
+                />
+                <span>Sirf selected leads ({selectedIds.size})</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={exportOnlyWithPhone}
+                  onChange={(e) => setExportOnlyWithPhone(e.target.checked)}
+                />
+                <span>Sirf wo leads jinke paas phone number hai</span>
+              </label>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-ghost" onClick={() => setShowExport(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleExportPdf} disabled={isExporting}>
+                {isExporting ? 'Generating…' : `Download PDF (${Math.min(Math.max(1, Number(exportCount) || 1), Math.max(1, availableToExport))})`}
+              </button>
             </div>
           </div>
         </div>
