@@ -64,6 +64,19 @@ export default function OnboardingPage() {
     };
   }, [step]);
 
+  const connectWhatsApp = async () => {
+    setWaStatus("INITIALIZING");
+    try {
+      const res = await fetch("/api/whatsapp/status", { method: "PUT" });
+      if (!res.ok) throw new Error("Could not connect WhatsApp");
+      const data = await res.json();
+      setWaStatus(data.status);
+    } catch {
+      setWaStatus("ERROR");
+      setError("Could not connect WhatsApp. Please retry.");
+    }
+  };
+
   const saveSettings = async (patch: Record<string, string>) => {
     const res = await fetch("/api/settings", {
       method: "POST",
@@ -288,7 +301,7 @@ export default function OnboardingPage() {
               )}
               {(waStatus === "DISCONNECTED" || waStatus === "ERROR") && (
                 <div style={{ color: "var(--text-secondary)", padding: 20 }}>
-                  Couldn&apos;t initialise WhatsApp. You can skip this and try later.
+                  <button className="btn btn-primary" onClick={connectWhatsApp}>Connect WhatsApp</button>
                 </div>
               )}
             </div>

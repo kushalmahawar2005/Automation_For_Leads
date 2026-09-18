@@ -506,6 +506,47 @@ export default function Home() {
     }
   };
 
+  // ---- Import leads from a Google Sheet ----
+  const [showImport, setShowImport] = useState(false);
+  const [sheetUrl, setSheetUrl] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
+
+  const handleImportSheet = async () => {
+    if (!sheetUrl.trim()) {
+      showToast("Google Sheet link paste karo", "error");
+      return;
+    }
+    setIsImporting(true);
+    try {
+      const res = await fetch("/api/leads/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sheetUrl }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Import failed");
+
+      setViewMode('SEARCH');
+      setResults(data.results || []);
+      setSelectedIds(new Set());
+      setHasMore(false);
+      setTotalResults(null);
+      setStats((s) => ({ ...s, found: data.newCount ?? 0 }));
+      const extra = [
+        data.duplicateCount ? `${data.duplicateCount} duplicate` : '',
+        data.skippedCount ? `${data.skippedCount} without valid phone` : '',
+      ].filter(Boolean).join(', ');
+      showToast(`Imported ${data.newCount} leads${extra ? ` (${extra} skipped)` : ''}`, "success");
+      if (data.truncated) showToast("Sirf pehli 2000 rows import hui", "info");
+      setShowImport(false);
+      loadCounts();
+    } catch (err) {
+      showToast((err as Error).message, "error");
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   // ---- Bulk send (server-side, anti-ban) ----
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [isStarting, setIsStarting] = useState(false);
@@ -585,6 +626,19 @@ export default function Home() {
   const resendFailed = async () => {
     await loadBucket('FAILED');
     showToast("Loaded failed leads — Select All, then Send to retry", "info");
+  };
+
+  const handleConnect = async () => {
+    setWaStatus('INITIALIZING');
+    try {
+      const res = await fetch('/api/whatsapp/status', { method: 'PUT' });
+      if (!res.ok) throw new Error('Could not connect WhatsApp');
+      const data = await res.json();
+      setWaStatus(data.status);
+    } catch {
+      setWaStatus('ERROR');
+      showToast('Could not connect WhatsApp. Please retry.', 'error');
+    }
   };
 
   const handleLogout = async () => {
@@ -674,8 +728,10 @@ export default function Home() {
             )}
             {(waStatus === 'ERROR' || waStatus === 'DISCONNECTED') && (
               <div style={{ padding: '20px', color: 'var(--accent)' }}>
-                <span className="loading-spinner"></span> <br /><br />
-                {waStatus === 'ERROR' ? 'Connection error encountered. Retrying...' : 'Connecting to WhatsApp...'}
+                {waStatus === 'ERROR' ? 'WhatsApp connection failed.' : 'WhatsApp is disconnected.'}
+                <div style={{ marginTop: '16px' }}>
+                  <button className="btn btn-primary btn-sm" onClick={handleConnect}>Connect WhatsApp</button>
+                </div>
                 <div style={{ marginTop: '16px' }}>
                   <button className="btn btn-secondary btn-sm" onClick={handleLogout}>
                     🔄 Reset WhatsApp Session
@@ -744,6 +800,12 @@ export default function Home() {
               {isSearching ? <span className="loading-spinner"></span> : 'Scrape Data'}
             </button>
           </form>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
+            <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>Leads pehle se hain?</span>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowImport(true)}>
+              📥 Import from Google Sheet
+            </button>
+          </div>
         </div>
 
         <div className="content-grid">
@@ -1108,6 +1170,43 @@ export default function Home() {
               <button className="btn btn-ghost" onClick={() => setShowExport(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={handleExportPdf} disabled={isExporting}>
                 {isExporting ? 'Generating…' : `Download PDF (${Math.min(Math.max(1, Number(exportCount) || 1), Math.max(1, availableToExport))})`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import from Google Sheet Modal */}
+      {showImport && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <div className="modal-header">
+              <h3>📥 Import Leads from Google Sheet</h3>
+              <button className="btn-icon" onClick={() => setShowImport(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label>Google Sheet Link</label>
+                <input
+                  type="url"
+                  className="form-input"
+                  placeholder="https://docs.google.com/spreadsheets/d/..."
+                  value={sheetUrl}
+                  onChange={(e) => setSheetUrl(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              <div className="api-hint" style={{ lineHeight: 1.6 }}>
+                1. Sheet me <b>Share → General access → Anyone with the link (Viewer)</b> set karo.<br />
+                2. Pehli row me headers hone chahiye — jaise <b>Name</b>, <b>Phone</b>, <b>Address</b>, <b>Website</b>.<br />
+                3. <b>Phone</b> column zaroori hai. Duplicate numbers apne aap skip ho jayenge.<br />
+                Jo tab browser me khula hai, wahi import hoga (max 2000 rows).
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-ghost" onClick={() => setShowImport(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleImportSheet} disabled={isImporting}>
+                {isImporting ? 'Importing…' : 'Import Leads'}
               </button>
             </div>
           </div>

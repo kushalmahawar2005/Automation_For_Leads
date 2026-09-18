@@ -1,3 +1,4 @@
+import { acquireLock } from "./runtime-control";
 import { MessageMedia } from "whatsapp-web.js";
 import type { Lead, Settings } from "@prisma/client";
 import { prisma } from "./db";
@@ -198,9 +199,32 @@ export type StartCampaignOpts = {
   mediaPath?: string | null;
 };
 
-export async function startCampaign(
+export async function startCampaign(userId: string, opts: StartCampaignOpts) {
+  // Reserve before the first database await. Single sends share this lock.
+  const release = acquireLock(`send:${userId}`);
+  if (!release) return { ok: false as const, error: "A send is already running." };
+  let handedOff = false;
+  try {
+    const result = await startCampaignLocked(userId, opts, release);
+    handedOff = result.ok;
+    return result;
+  } catch (error) {
+    const state = campaigns.get(userId);
+    if (state) {
+      state.running = false;
+      state.finishedAt = Date.now();
+      state.stopReason = "ERROR";
+    }
+    throw error;
+  } finally {
+    if (!handedOff) release();
+  }
+}
+
+async function startCampaignLocked(
   userId: string,
-  opts: StartCampaignOpts
+  opts: StartCampaignOpts,
+  release: () => void
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const existing = campaigns.get(userId);
   if (existing?.running) {
@@ -230,7 +254,7 @@ export async function startCampaign(
     where: { id: { in: opts.leadIds }, userId },
   });
   const byId = new Map(leads.map((l) => [l.id, l]));
-  const ordered = opts.leadIds.map((id) => byId.get(id)).filter(Boolean) as Lead[];
+  const ordered = [...new Set(opts.leadIds)].map((id) => byId.get(id)).filter(Boolean) as Lead[];
 
   // How many we've already sent today counts against the cap.
   const dailySentToday = await prisma.messageLog.count({
@@ -279,7 +303,7 @@ export async function startCampaign(
     state.running = false;
     state.finishedAt = Date.now();
     state.stopReason = "ERROR";
-  });
+  }).finally(release);
 
   return { ok: true };
 }
@@ -383,6 +407,11 @@ async function runCampaign(
       }
     }
 
+    if (state.stopRequested || getClient(userId) !== client || getWhatsAppStatus(userId).status !== "READY") {
+      state.stopReason = state.stopRequested ? "STOPPED" : "WA_DISCONNECTED";
+      break;
+    }
+
     const message = renderTemplate(
       opts.templateBody,
       lead,
@@ -461,6 +490,18 @@ async function runCampaign(
 // Shared single-send used by /api/send. Applies the daily cap + logging so the
 // one-off path can't be used to bypass anti-ban limits.
 export async function sendSingle(
+  userId: string, leadId: string | undefined, phone: string, message: string
+): Promise<{ ok: true; id: string } | { ok: false; error: string; code?: string }> {
+  const release = acquireLock(`send:${userId}`);
+  if (!release) return { ok: false, error: "A send is already running.", code: "SEND_BUSY" };
+  try {
+    return await sendSingleLocked(userId, leadId, phone, message);
+  } finally {
+    release();
+  }
+}
+
+async function sendSingleLocked(
   userId: string,
   leadId: string | undefined,
   phone: string,

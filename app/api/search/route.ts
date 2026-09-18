@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
+import puppeteer, { type Browser } from "puppeteer";
+import { acquireLock, closeBrowser } from "@/lib/runtime-control";
 import { prisma } from "@/lib/db";
 
 const normPhone = (raw: string): string => {
@@ -12,10 +14,13 @@ const normPhone = (raw: string): string => {
 };
 
 async function scrapeGoogleMapsFallback(query: string, location: string, pageSize: number) {
+  const release = acquireLock('search-browser');
+  if (!release) throw new Error('SEARCH_BUSY');
+  let browser: Browser | undefined;
   try {
-    const puppeteer = require("puppeteer");
     const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_PATH || undefined;
-    const browser = await puppeteer.launch({
+    browser = await puppeteer.launch({
+      timeout: 30_000,
       headless: true,
       executablePath,
       args: [
@@ -66,11 +71,14 @@ async function scrapeGoogleMapsFallback(query: string, location: string, pageSiz
 
       return items;
     } finally {
-      await browser.close().catch(() => {});
+      await closeBrowser(browser);
+      release();
     }
   } catch (err) {
     console.error("Puppeteer fallback scraper error:", err);
     return [];
+  } finally {
+    if (!browser) release();
   }
 }
 
@@ -207,6 +215,9 @@ export async function POST(req: Request) {
       hasNext,
     });
   } catch (error: any) {
+    if (error instanceof Error && error.message === 'SEARCH_BUSY') {
+      return NextResponse.json({ error: 'Another search is running. Please try again shortly.' }, { status: 429 });
+    }
     console.error("Search error:", error);
     return NextResponse.json(
       { error: "Failed to search businesses. Please try again." },

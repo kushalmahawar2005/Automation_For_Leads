@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getWhatsAppStatus, initWhatsApp, logoutWhatsApp } from "@/lib/whatsapp";
+import { getWhatsAppStatus, connectWhatsApp, logoutWhatsApp } from "@/lib/whatsapp";
+import { stopCampaign } from "@/lib/sender";
 import { getSessionUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
@@ -11,13 +12,14 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const status = getWhatsAppStatus(user.id);
+  return NextResponse.json(getWhatsAppStatus(user.id));
+}
 
-  if (status.status === 'DISCONNECTED' || status.status === 'ERROR') {
-    initWhatsApp(user.id).catch(console.error);
-  }
-
-  return NextResponse.json(status);
+export async function PUT() {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  connectWhatsApp(user.id);
+  return NextResponse.json(getWhatsAppStatus(user.id));
 }
 
 export async function POST() {
@@ -26,9 +28,10 @@ export async function POST() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
+    stopCampaign(user.id);
     await logoutWhatsApp(user.id);
     return NextResponse.json({ success: true });
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+  } catch (e: unknown) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Logout failed" }, { status: 500 });
   }
 }
