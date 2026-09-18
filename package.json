@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --webpack",
     "prebuild": "node scripts/install-browser.cjs",
     "build": "next build",
     "render-build": "npx puppeteer browsers install chrome && npx prisma generate && npx prisma db push && next build",
