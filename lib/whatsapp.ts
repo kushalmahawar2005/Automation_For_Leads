@@ -3,6 +3,7 @@ import qrcode from 'qrcode';
 import fs from 'fs';
 import path from 'path';
 import { closeBrowser, withTimeout } from './runtime-control';
+import { browserExecutablePath } from './browser';
 
 export type WaStatus =
   | 'INITIALIZING'
@@ -53,12 +54,7 @@ function retryDelay(failures: number): number {
 }
 
 function getExecutablePath(): string | undefined {
-  return (
-    process.env.PUPPETEER_EXECUTABLE_PATH ||
-    process.env.CHROME_PATH ||
-    process.env.CHROMIUM_PATH ||
-    undefined
-  );
+  return browserExecutablePath();
 }
 
 function ensureState(userId: string): ClientState {

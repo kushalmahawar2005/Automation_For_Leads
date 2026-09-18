@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import puppeteer, { type Browser } from "puppeteer";
 import { acquireLock, closeBrowser } from "@/lib/runtime-control";
+import { browserExecutablePath } from "@/lib/browser";
 import { prisma } from "@/lib/db";
 
 const normPhone = (raw: string): string => {
@@ -18,7 +19,7 @@ async function scrapeGoogleMapsFallback(query: string, location: string, pageSiz
   if (!release) throw new Error('SEARCH_BUSY');
   let browser: Browser | undefined;
   try {
-    const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_PATH || undefined;
+    const executablePath = browserExecutablePath();
     browser = await puppeteer.launch({
       timeout: 30_000,
       headless: true,
