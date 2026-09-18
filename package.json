@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/install-browser.cjs",
     "build": "next build",
     "render-build": "npx puppeteer browsers install chrome && npx prisma generate && npx prisma db push && next build",
     "start": "next start -H 0.0.0.0",
